@@ -29,8 +29,28 @@ protocol AnalysisManaging {
 final class AnalysisManager: AnalysisManaging {
   static let shared = AnalysisManager()
 
-  private init() {
-    store = StorageManager.shared
+  /// Storage seam: production (`AnalysisManager.shared` and any no-argument
+  /// construction) resolves to `StorageManager.shared`; tests and future
+  /// engine hosts inject an isolated `StorageManager`. Every storage
+  /// operation the manager performs directly goes through this dependency,
+  /// including reprocessing's deletion/reset logic, batch-status updates,
+  /// retry-eligibility queries, and screenshot batching.
+  ///
+  /// `llmService` remains `LLMService.shared` for every instance at this
+  /// stage: once a non-empty batch passes the manager's own
+  /// storage/scheduling logic (screenshots present, ≥5 min duration, not
+  /// idle), processing crosses into that global LLM boundary, which still
+  /// operates against `StorageManager.shared` internally. Storage injection
+  /// here therefore does NOT make a real (non-empty) LLM reprocess isolated —
+  /// see the boundary note on `queueLLMRequest`'s guard paths.
+  ///
+  /// Construction is otherwise side-effect-free: no timers, no periodic
+  /// work, no analysis processing (scheduling only starts via the explicit
+  /// `startAnalysisJob()`). The one pre-existing filesystem touch is
+  /// `VideoProcessingService()`'s init, which ensures the real timelapses
+  /// directory exists (an idempotent mkdir production already performs).
+  init(storage: any StorageManaging = StorageManager.shared) {
+    store = storage
     llmService = LLMService.shared
     videoProcessingService = VideoProcessingService()
   }
@@ -905,8 +925,12 @@ final class AnalysisManager: AnalysisManaging {
       try? FileManager.default.removeItem(at: url)
     }
 
-    StorageManager.shared.updateBatch(batchId, status: "analyzed", reason: "idle_shortcut_applied")
-    StorageManager.shared.checkpoint(mode: .passive)
+    // Terminal idle-shortcut state, written synchronously through the
+    // injected store (protocol-level `updateBatch` preserves the exact
+    // status + reason + sequencing the concrete method provided), followed
+    // by the store-level passive WAL checkpoint.
+    store.updateBatch(batchId, status: "analyzed", reason: "idle_shortcut_applied")
+    store.checkpointPassive()
 
     var analyticsProps: [String: Any] = [
       "batch_id": Int(truncatingIfNeeded: batchId),

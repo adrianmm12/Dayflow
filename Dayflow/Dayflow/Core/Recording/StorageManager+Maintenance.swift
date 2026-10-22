@@ -39,6 +39,13 @@ extension StorageManager {
     checkpointTimer = timer
   }
 
+  /// `StorageManaging`-level passive checkpoint. Delegates to the exact
+  /// existing `checkpoint(mode: .passive)` behavior without leaking GRDB's
+  /// checkpoint-mode type through the protocol.
+  func checkpointPassive() {
+    checkpoint(mode: .passive)
+  }
+
   // MARK: - Safe Database Initialization
 
   /// Opens the database with automatic recovery from backup if corrupted.

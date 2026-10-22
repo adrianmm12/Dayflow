@@ -18,6 +18,11 @@ protocol StorageManaging: Sendable {
   // Analysis‑batch management
   func saveBatch(startTs: Int, endTs: Int, chunkIds: [Int64]) -> Int64?
   func updateBatchStatus(batchId: Int64, status: String)
+  /// Synchronously writes a batch's status and reason in one transaction.
+  /// Unlike `updateBatchStatus` (async fire-and-forget, status only), callers
+  /// that report completion only after the terminal state is durably written
+  /// use this.
+  func updateBatch(_ batchId: Int64, status: String, reason: String?)
   func markBatchFailed(batchId: Int64, reason: String)
 
   // Record details about all LLM calls for a batch
@@ -116,4 +121,11 @@ protocol StorageManaging: Sendable {
 
   /// Fetch screenshots within a time range (for timelapse generation)
   func fetchScreenshotsInTimeRange(startTs: Int, endTs: Int) -> [Screenshot]
+
+  // MARK: - Maintenance
+
+  /// Performs a passive WAL checkpoint (durability maintenance: merges the
+  /// write-ahead log into the main database file). Storage-level abstraction
+  /// so callers don't need GRDB's `Database.CheckpointMode`.
+  func checkpointPassive()
 }
