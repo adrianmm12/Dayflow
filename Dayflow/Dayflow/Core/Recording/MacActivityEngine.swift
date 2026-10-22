@@ -118,6 +118,37 @@ final class MacActivityEngine {
       failedBatchCount: batches.filter { $0.status == "failed" }.count
     )
   }
+
+  // MARK: - Capture control
+
+  /// Requests screen capture to start. Delegates to the app's canonical
+  /// recording-state mutation (AppState.setRecording), which the screen
+  /// recorder observes through its existing subscription. Like the manual
+  /// recording toggle, the preference persists and is restored on launch.
+  ///
+  /// Permission UX is host-owned, not part of this call: if the
+  /// screen-recording permission is missing, the recorder's existing
+  /// machinery turns recording back off (without persisting that
+  /// correction), and posts the screen-recording permission notice for the
+  /// host to surface.
+  func startCapture() {
+    AppState.shared.setRecording(true, analyticsReason: "engine")
+  }
+
+  /// Requests screen capture to stop. Delegates to the canonical
+  /// recording-state mutation; the preference persists, matching the manual
+  /// toggle's semantics.
+  func stopCapture() {
+    AppState.shared.setRecording(false, analyticsReason: "engine")
+  }
+
+  /// Whether the recording-control flag is currently enabled: a read-only
+  /// mirror of the state the recorder observes. This is not an
+  /// instantaneous capture sensor — the recorder pauses during sleep/lock
+  /// while this flag stays true.
+  var isCaptureEnabled: Bool {
+    AppState.shared.isRecording
+  }
 }
 
 /// The engine façade's activity-change surface: re-exposes the storage

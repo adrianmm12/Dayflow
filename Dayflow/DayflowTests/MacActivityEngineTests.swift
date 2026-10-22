@@ -167,4 +167,18 @@ final class MacActivityEngineTests: XCTestCase {
 
     wait(for: [unexpectedSignal], timeout: 0.3)
   }
+
+  // MARK: - Capture control
+
+  /// Read-only mirror only: exercising startCapture/stopCapture in tests
+  /// would start/stop real screen capture (the hosted app's recorder is
+  /// subscribed to the recording state) and persist real recording
+  /// preferences, so the mutation path is verified by static delegation
+  /// (each façade method is a single call to the canonical
+  /// AppState.setRecording mutation) rather than executed here.
+  func testIsCaptureEnabledMirrorsRecordingControlState() {
+    let engine = MacActivityEngine()
+
+    XCTAssertEqual(engine.isCaptureEnabled, AppState.shared.isRecording)
+  }
 }
