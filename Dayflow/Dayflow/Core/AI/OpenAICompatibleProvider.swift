@@ -10,9 +10,12 @@ final class OpenAICompatibleProvider: ChatGPTTimelinePromptSupporting {
   private let configuration: OpenAICompatibleRuntimeConfiguration
   private let completion: Completion?
 
-  init(configuration: OpenAICompatibleRuntimeConfiguration, completion: Completion? = nil) {
+  init(
+    configuration: OpenAICompatibleRuntimeConfiguration, completion: Completion? = nil,
+    llmLogger: LLMLogger = .production
+  ) {
     self.configuration = configuration
-    self.transport = OllamaProvider(openAICompatible: configuration)
+    self.transport = OllamaProvider(openAICompatible: configuration, llmLogger: llmLogger)
     self.completion = completion
   }
 

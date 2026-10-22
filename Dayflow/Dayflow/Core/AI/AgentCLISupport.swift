@@ -26,9 +26,14 @@ protocol AgentCLISupporting: AnyObject, TimelineOutputSupporting {
   var cliTool: ChatCLITool { get }
   var runner: ChatCLIProcessRunner { get }
   var config: ChatCLIConfigManager { get }
+  /// Destination for `llm_calls` logging; defaults to production storage.
+  var llmLogger: LLMLogger { get }
 }
 
 extension AgentCLISupporting {
+  /// Production-default LLM call logging destination for conformers that are
+  /// not constructed with an injected logger.
+  var llmLogger: LLMLogger { LLMLogger.production }
 
   /// Run the CLI and clean up temp files after.
   func runAndScrub(

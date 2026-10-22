@@ -104,6 +104,7 @@ private final class RetryEligibilityStorageStub: StorageManaging {
   func fetchLLMCallsForBatches(batchIds: [Int64], limit: Int) -> [LLMCallDebugEntry] {
     fatalError("unexpected call")
   }
+  func insertLLMCall(_ rec: LLMCallDBRecord) { fatalError("unexpected call") }
   func saveObservations(batchId: Int64, observations: [Observation]) {
     fatalError("unexpected call")
   }

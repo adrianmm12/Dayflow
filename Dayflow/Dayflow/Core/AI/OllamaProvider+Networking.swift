@@ -134,7 +134,7 @@ extension OllamaProvider {
               acc[k] = v.description
             }
           }
-          LLMLogger.logFailure(
+          llmLogger.logFailure(
             ctx: ctx,
             http: LLMHTTPInfo(
               httpStatus: httpResponse.statusCode, responseHeaders: responseHeaders,
@@ -162,7 +162,7 @@ extension OllamaProvider {
               acc[k] = v.description
             }
           }
-          LLMLogger.logSuccess(
+          llmLogger.logSuccess(
             ctx: ctx,
             http: LLMHTTPInfo(
               httpStatus: httpResponse.statusCode, responseHeaders: responseHeaders,
@@ -178,7 +178,7 @@ extension OllamaProvider {
               acc[k] = v.description
             }
           }
-          LLMLogger.logFailure(
+          llmLogger.logFailure(
             ctx: ctx,
             http: LLMHTTPInfo(
               httpStatus: httpResponse.statusCode, responseHeaders: responseHeaders,
@@ -230,7 +230,7 @@ extension OllamaProvider {
               requestBody: fallbackBodyForLogging,
               startedAt: Date()
             )
-          LLMLogger.logFailure(
+          llmLogger.logFailure(
             ctx: ctx,
             http: nil,
             finishedAt: Date(),

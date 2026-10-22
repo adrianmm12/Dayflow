@@ -354,7 +354,7 @@ extension GeminiDirectProvider {
           logGeminiFailure(
             context: "transcribe.http503.salvaged", attempt: attempt, response: response,
             data: data, error: nil)
-          LLMLogger.logSuccess(
+          llmLogger.logSuccess(
             ctx: ctx,
             http: httpInfo,
             finishedAt: Date()
@@ -391,7 +391,7 @@ extension GeminiDirectProvider {
         }
 
         // Log as failure and throw
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -409,7 +409,7 @@ extension GeminiDirectProvider {
 
       // HTTP status is good (200-299), now validate content
       guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -428,7 +428,7 @@ extension GeminiDirectProvider {
       guard let candidates = json["candidates"] as? [[String: Any]],
         let firstCandidate = candidates.first
       else {
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -445,7 +445,7 @@ extension GeminiDirectProvider {
       }
 
       guard let content = firstCandidate["content"] as? [String: Any] else {
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -465,7 +465,7 @@ extension GeminiDirectProvider {
         let firstPart = parts.first,
         let text = firstPart["text"] as? String
       else {
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -482,7 +482,7 @@ extension GeminiDirectProvider {
       }
 
       // Everything succeeded - log success and return
-      LLMLogger.logSuccess(
+      llmLogger.logSuccess(
         ctx: ctx,
         http: httpInfo,
         finishedAt: Date()
@@ -508,7 +508,7 @@ extension GeminiDirectProvider {
           requestBody: request.httpBody,
           startedAt: requestStart
         )
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: nil,
           finishedAt: Date(),

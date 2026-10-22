@@ -51,7 +51,7 @@ extension GemmaBackupProvider {
     do {
       (data, response) = try await URLSession.shared.data(for: request)
     } catch {
-      LLMLogger.logFailure(
+      llmLogger.logFailure(
         ctx: ctx,
         http: nil,
         finishedAt: Date(),
@@ -73,7 +73,7 @@ extension GemmaBackupProvider {
 
     if let status, status >= 400 {
       let errorMessage = extractErrorMessage(from: data, fallback: "HTTP \(status) error")
-      LLMLogger.logFailure(
+      llmLogger.logFailure(
         ctx: ctx,
         http: LLMHTTPInfo(httpStatus: status, responseHeaders: responseHeaders, responseBody: data),
         finishedAt: Date(),
@@ -93,7 +93,7 @@ extension GemmaBackupProvider {
       let parts = content["parts"] as? [[String: Any]],
       let text = parts.first?["text"] as? String
     else {
-      LLMLogger.logFailure(
+      llmLogger.logFailure(
         ctx: ctx,
         http: LLMHTTPInfo(httpStatus: status, responseHeaders: responseHeaders, responseBody: data),
         finishedAt: Date(),
@@ -106,7 +106,7 @@ extension GemmaBackupProvider {
         userInfo: [NSLocalizedDescriptionKey: "Failed to parse response"])
     }
 
-    LLMLogger.logSuccess(
+    llmLogger.logSuccess(
       ctx: ctx,
       http: LLMHTTPInfo(httpStatus: status, responseHeaders: responseHeaders, responseBody: data),
       finishedAt: Date()

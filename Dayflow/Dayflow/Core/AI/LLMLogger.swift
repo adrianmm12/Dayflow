@@ -28,15 +28,50 @@ struct LLMHTTPInfo: Sendable {
 
 enum LLMLogStatus: String { case success, failure }
 
-enum LLMLogger {
+/// Persists raw LLM request/response cycles (`llm_calls`) and reports call
+/// telemetry. An instance type so independently constructed inference
+/// pipelines can log into their own injected `StorageManaging` store; the
+/// `production` default (and the compatibility static facade below) preserve
+/// the original hard-wired `StorageManager.shared` destination for existing
+/// production callers.
+final class LLMLogger {
+  /// Production default: logs `llm_calls` into the shared storage database,
+  /// exactly as before this type became injectable.
+  static let production = LLMLogger()
+
   private static let maxStoredBodyBytes = 64 * 1024
 
-  // Best-effort: never throw, never block pipeline beyond DB write time
+  private let storage: any StorageManaging
+
+  init(storage: any StorageManaging = StorageManager.shared) {
+    self.storage = storage
+  }
+
+  // Compatibility facade for callers that are not constructed with an
+  // injected logger (e.g. the onboarding connection tester). Batch-path
+  // providers constructed by `LLMService` route through their instance
+  // logger instead, so an injected pipeline never lands here.
   static func logSuccess(ctx: LLMCallContext, http: LLMHTTPInfo, finishedAt: Date) {
+    production.logSuccess(ctx: ctx, http: http, finishedAt: finishedAt)
+  }
+
+  static func logFailure(
+    ctx: LLMCallContext, http: LLMHTTPInfo?, finishedAt: Date, errorDomain: String?,
+    errorCode: Int?, errorMessage: String?, failureStdout: String? = nil,
+    failureStderr: String? = nil
+  ) {
+    production.logFailure(
+      ctx: ctx, http: http, finishedAt: finishedAt, errorDomain: errorDomain,
+      errorCode: errorCode, errorMessage: errorMessage, failureStdout: failureStdout,
+      failureStderr: failureStderr)
+  }
+
+  // Best-effort: never throw, never block pipeline beyond DB write time
+  func logSuccess(ctx: LLMCallContext, http: LLMHTTPInfo, finishedAt: Date) {
     let latencyMs = Int(finishedAt.timeIntervalSince(ctx.startedAt) * 1000)
-    let record = makeRecord(
+    let record = Self.makeRecord(
       ctx: ctx, http: http, status: .success, latencyMs: latencyMs, error: nil)
-    StorageManager.shared.insertLLMCall(record)
+    storage.insertLLMCall(record)
     Task { @MainActor in
       var props: [String: Any] = [
         "provider": ctx.provider,
@@ -67,16 +102,16 @@ enum LLMLogger {
     }
   }
 
-  static func logFailure(
+  func logFailure(
     ctx: LLMCallContext, http: LLMHTTPInfo?, finishedAt: Date, errorDomain: String?,
     errorCode: Int?, errorMessage: String?, failureStdout: String? = nil,
     failureStderr: String? = nil
   ) {
     let latencyMs = Int(finishedAt.timeIntervalSince(ctx.startedAt) * 1000)
-    let record = makeRecord(
+    let record = Self.makeRecord(
       ctx: ctx, http: http, status: .failure, latencyMs: latencyMs,
       error: (errorDomain, errorCode, errorMessage))
-    StorageManager.shared.insertLLMCall(record)
+    storage.insertLLMCall(record)
     Task { @MainActor in
       var props: [String: Any] = [
         "provider": ctx.provider,

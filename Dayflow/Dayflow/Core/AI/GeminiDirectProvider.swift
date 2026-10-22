@@ -9,6 +9,8 @@ final class GeminiDirectProvider {
   let apiKey: String
   let fileEndpoint = "https://generativelanguage.googleapis.com/upload/v1beta/files"
   let modelPreference: GeminiModelPreference
+  /// Destination for `llm_calls` logging; defaults to production storage.
+  let llmLogger: LLMLogger
 
   static let capacityErrorCodes: Set<Int> = [403, 404, 429, 503]
 
@@ -37,8 +39,9 @@ final class GeminiDirectProvider {
       "https://generativelanguage.googleapis.com/v1beta/models/\(model.rawValue):generateContent"
   }
 
-  init(apiKey: String, preference: GeminiModelPreference = .default) {
+  init(apiKey: String, preference: GeminiModelPreference = .default, llmLogger: LLMLogger = .production) {
     self.apiKey = apiKey.components(separatedBy: .whitespacesAndNewlines).joined()
     self.modelPreference = preference
+    self.llmLogger = llmLogger
   }
 }

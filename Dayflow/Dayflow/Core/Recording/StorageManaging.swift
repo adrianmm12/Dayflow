@@ -82,6 +82,10 @@ protocol StorageManaging: Sendable {
   func fetchRecentAnalysisBatchesForDebug(limit: Int) -> [AnalysisBatchDebugEntry]
   func fetchLLMCallsForBatches(batchIds: [Int64], limit: Int) -> [LLMCallDebugEntry]
 
+  /// Persists one raw LLM request/response cycle (`llm_calls`), used by
+  /// provider-side call logging.
+  func insertLLMCall(_ rec: LLMCallDBRecord)
+
   // Note: Transcript storage methods removed in favor of Observations
 
   // NEW: Observations Storage

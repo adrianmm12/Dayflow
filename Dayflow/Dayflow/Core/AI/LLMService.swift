@@ -208,10 +208,19 @@ final class LLMService: LLMServicing {
     let fallbackState: GemmaFallbackState?
   }
 
+  /// LLM-call logging destination tied to this service's (possibly injected)
+  /// storage: providers constructed by this service log their `llm_calls`
+  /// rows into the same store the service persists everything else into.
+  /// Production wiring resolves to `StorageManager.shared`, exactly as
+  /// before the logger became injectable.
+  private var llmCallLogger: LLMLogger {
+    LLMLogger(storage: storage)
+  }
+
   private func makeGeminiProvider() -> GeminiDirectProvider? {
     if let apiKey = KeychainManager.shared.retrieve(for: "gemini"), !apiKey.isEmpty {
       let preference = GeminiModelPreference.load()
-      return GeminiDirectProvider(apiKey: apiKey, preference: preference)
+      return GeminiDirectProvider(apiKey: apiKey, preference: preference, llmLogger: llmCallLogger)
     } else {
       print("❌ [LLMService] Failed to retrieve Gemini API key from Keychain")
       return nil
@@ -220,7 +229,7 @@ final class LLMService: LLMServicing {
 
   private func makeGemmaBackupProvider() -> GemmaBackupProvider? {
     if let apiKey = KeychainManager.shared.retrieve(for: "gemini"), !apiKey.isEmpty {
-      return GemmaBackupProvider(apiKey: apiKey)
+      return GemmaBackupProvider(apiKey: apiKey, llmLogger: llmCallLogger)
     }
     print("❌ [LLMService] Failed to retrieve Gemini API key for Gemma fallback")
     return nil
@@ -244,7 +253,7 @@ final class LLMService: LLMServicing {
   }
 
   private func makeOllamaProvider(endpoint: String) -> OllamaProvider {
-    OllamaProvider(endpoint: endpoint)
+    OllamaProvider(endpoint: endpoint, llmLogger: llmCallLogger)
   }
 
   private func localProviderEndpoint() -> String {
@@ -264,7 +273,7 @@ final class LLMService: LLMServicing {
       configuration: configuration,
       bearerToken: apiKey
     )
-    return OpenAICompatibleProvider(configuration: runtimeConfiguration)
+    return OpenAICompatibleProvider(configuration: runtimeConfiguration, llmLogger: llmCallLogger)
   }
 
   private func providerLabel(for providerID: LLMProviderID) -> String {
@@ -366,7 +375,7 @@ final class LLMService: LLMServicing {
         ), fallbackState: nil
       )
     case .chatGPT:
-      let provider = CodexProvider()
+      let provider = CodexProvider(llmLogger: llmCallLogger)
       return (
         actions: BatchProviderActions(
           transcribeScreenshots: provider.transcribeScreenshots,
@@ -375,7 +384,7 @@ final class LLMService: LLMServicing {
         ), fallbackState: nil
       )
     case .claude:
-      let provider = ClaudeProvider()
+      let provider = ClaudeProvider(llmLogger: llmCallLogger)
       return (
         actions: BatchProviderActions(
           transcribeScreenshots: provider.transcribeScreenshots,
@@ -660,7 +669,7 @@ final class LLMService: LLMServicing {
         generateTextStreaming: nil
       )
     case .chatGPT:
-      let provider = CodexProvider()
+      let provider = CodexProvider(llmLogger: llmCallLogger)
       return TextProviderActions(
         generateText: { prompt in
           try await provider.generateText(prompt: prompt)
@@ -668,7 +677,7 @@ final class LLMService: LLMServicing {
         generateTextStreaming: provider.generateTextStreaming
       )
     case .claude:
-      let provider = ClaudeProvider()
+      let provider = ClaudeProvider(llmLogger: llmCallLogger)
       return TextProviderActions(
         generateText: { prompt in
           try await provider.generateText(prompt: prompt)
@@ -1277,12 +1286,12 @@ final class LLMService: LLMServicing {
         history: request.history
       )
     case .codex:
-      return CodexProvider().generateChatStreaming(
+      return CodexProvider(llmLogger: llmCallLogger).generateChatStreaming(
         prompt: request.prompt,
         sessionId: request.sessionId
       )
     case .claude:
-      return ClaudeProvider().generateChatStreaming(
+      return ClaudeProvider(llmLogger: llmCallLogger).generateChatStreaming(
         prompt: request.prompt,
         sessionId: request.sessionId
       )

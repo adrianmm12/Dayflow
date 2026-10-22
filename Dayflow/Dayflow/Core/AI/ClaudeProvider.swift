@@ -5,8 +5,10 @@ final class ClaudeProvider: AgentCLISupporting {
   var cliTool: ChatCLITool { .claude }
   let runner = ChatCLIProcessRunner()
   let config = ChatCLIConfigManager.shared
+  let llmLogger: LLMLogger
 
-  init() {
+  init(llmLogger: LLMLogger = .production) {
+    self.llmLogger = llmLogger
     config.ensureWorkingDirectory()
   }
 

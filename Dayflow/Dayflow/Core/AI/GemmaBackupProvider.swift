@@ -11,10 +11,13 @@ final class GemmaBackupProvider {
   let model: String
   let screenshotInterval: TimeInterval = 10
   let baseURL = "https://generativelanguage.googleapis.com/v1beta/models"
+  /// Destination for `llm_calls` logging; defaults to production storage.
+  let llmLogger: LLMLogger
 
-  init(apiKey: String, model: String = "gemma-4-31b-it") {
+  init(apiKey: String, model: String = "gemma-4-31b-it", llmLogger: LLMLogger = .production) {
     self.apiKey = apiKey.components(separatedBy: .whitespacesAndNewlines).joined()
     self.model = model
+    self.llmLogger = llmLogger
   }
 
   // MARK: - Public API

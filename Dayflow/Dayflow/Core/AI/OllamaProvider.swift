@@ -9,6 +9,8 @@ import Foundation
 final class OllamaProvider {
   let endpoint: String
   private let injectedRuntimeConfiguration: OpenAICompatibleRuntimeConfiguration?
+  /// Destination for `llm_calls` logging; defaults to production storage.
+  let llmLogger: LLMLogger
   let screenshotInterval: TimeInterval = 10  // seconds between screenshots
   // Read persisted local settings
   var savedModelId: String {
@@ -70,14 +72,19 @@ final class OllamaProvider {
     return OllamaPromptPreferences.load()
   }
 
-  init(endpoint: String = "http://localhost:1234") {
+  init(endpoint: String = "http://localhost:1234", llmLogger: LLMLogger = .production) {
     self.endpoint = endpoint
     self.injectedRuntimeConfiguration = nil
+    self.llmLogger = llmLogger
   }
 
-  init(openAICompatible configuration: OpenAICompatibleRuntimeConfiguration) {
+  init(
+    openAICompatible configuration: OpenAICompatibleRuntimeConfiguration,
+    llmLogger: LLMLogger = .production
+  ) {
     self.endpoint = configuration.endpoint
     self.injectedRuntimeConfiguration = configuration
+    self.llmLogger = llmLogger
   }
 
   // Strip user references from observations to prevent LLM from using third-person language

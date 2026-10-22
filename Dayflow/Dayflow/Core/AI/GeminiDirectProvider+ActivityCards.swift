@@ -464,7 +464,7 @@ extension GeminiDirectProvider {
         }
 
         // Log as failure and throw
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -485,7 +485,7 @@ extension GeminiDirectProvider {
         let firstCandidate = candidates.first,
         let content = firstCandidate["content"] as? [String: Any]
       else {
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -508,7 +508,7 @@ extension GeminiDirectProvider {
         let firstPart = parts.first,
         let text = firstPart["text"] as? String
       else {
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: httpInfo,
           finishedAt: Date(),
@@ -528,7 +528,7 @@ extension GeminiDirectProvider {
       }
 
       // Everything succeeded - log success and return
-      LLMLogger.logSuccess(
+      llmLogger.logSuccess(
         ctx: ctx,
         http: httpInfo,
         finishedAt: Date()
@@ -554,7 +554,7 @@ extension GeminiDirectProvider {
           requestBody: request.httpBody,
           startedAt: requestStart
         )
-        LLMLogger.logFailure(
+        llmLogger.logFailure(
           ctx: ctx,
           http: nil,
           finishedAt: Date(),

@@ -278,7 +278,7 @@ extension AgentCLISupporting {
     let combined = stdout + separator + stderr
     let http = LLMHTTPInfo(
       httpStatus: nil, responseHeaders: responseHeaders, responseBody: combined.data(using: .utf8))
-    LLMLogger.logSuccess(ctx: ctx, http: http, finishedAt: finishedAt)
+    llmLogger.logSuccess(ctx: ctx, http: http, finishedAt: finishedAt)
   }
 
   func logFailure(
@@ -307,7 +307,7 @@ extension AgentCLISupporting {
       )
     }
 
-    LLMLogger.logFailure(
+    llmLogger.logFailure(
       ctx: ctx, http: http, finishedAt: finishedAt, errorDomain: "ChatCLI",
       errorCode: (error as NSError).code, errorMessage: error.localizedDescription,
       failureStdout: stdout, failureStderr: stderr)
