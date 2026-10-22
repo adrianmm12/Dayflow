@@ -60,4 +60,17 @@ final class MacActivityEngine {
   func shutdown() {
     StorageManager.shared.checkpoint(mode: .truncate)
   }
+
+  // MARK: - Read-only timeline activity access
+
+  /// The persisted timeline cards whose time overlaps the given range, oldest
+  /// first, exactly as storage returns them: no category filtering (System /
+  /// "Processing failed" cards are included) and soft-deleted cards are
+  /// excluded. Reads the shared storage database synchronously.
+  ///
+  /// Recent-activity queries compose naturally:
+  /// `activities(from: Date().addingTimeInterval(-lookback), to: Date())`.
+  func activities(from: Date, to: Date) -> [TimelineCard] {
+    StorageManager.shared.fetchTimelineCardsByTimeRange(from: from, to: to)
+  }
 }
