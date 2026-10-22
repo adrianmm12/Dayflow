@@ -73,4 +73,79 @@ final class MacActivityEngine {
   func activities(from: Date, to: Date) -> [TimelineCard] {
     StorageManager.shared.fetchTimelineCardsByTimeRange(from: from, to: to)
   }
+
+  // MARK: - Reprocessing
+
+  /// Re-processes one logical day's captured activity through the analysis
+  /// machinery, using Dayflow's existing day-level reprocessing semantics.
+  ///
+  /// The day is a `yyyy-MM-dd` logical-day string under the app's 4 AM
+  /// boundary (`Date().getDayInfoFor4AMBoundary().dayString`). Reprocessing
+  /// deletes that day's timeline cards (and their timelapse files), deletes
+  /// its observations, resets the day's batches to pending, and re-runs each
+  /// batch sequentially through the provider pipeline. Progress messages and
+  /// the completion result are delivered on the main thread.
+  func reprocessDay(
+    _ day: String,
+    progressHandler: @escaping (String) -> Void,
+    completion: @escaping (Result<Void, Error>) -> Void
+  ) {
+    AnalysisManager.shared.reprocessDay(
+      day, progressHandler: progressHandler, completion: completion)
+  }
+
+  // MARK: - Processing status
+
+  /// A read-only, point-in-time snapshot of the analysis pipeline's state.
+  ///
+  /// Persisted batch statuses are read from the storage database. The
+  /// in-flight count comes from the analysis manager's in-memory tracker,
+  /// which is authoritative for "executing right now": a persisted
+  /// "processing" status can be left behind by a mid-run quit, so it is not
+  /// reported as active work (such batches are retried automatically).
+  ///
+  /// The counts are point-in-time per source and not mutually atomic: a
+  /// batch transitioning between states can momentarily appear in, or be
+  /// missing from, one count. Terminal no-output outcomes (`failed_empty`,
+  /// `skipped_short`) are neither success nor failure here.
+  func processingStatus() -> ActivityProcessingStatus {
+    let batches = StorageManager.shared.allBatches()
+    return ActivityProcessingStatus(
+      analyzedBatchCount: batches.filter { ActivityProcessingStatus.isSuccessStatus($0.status) }
+        .count,
+      pendingBatchCount: batches.filter { $0.status == "pending" }.count,
+      inFlightBatchCount: AnalysisManager.shared.inFlightBatchCount,
+      failedBatchCount: batches.filter { $0.status == "failed" }.count
+    )
+  }
+}
+
+/// Machine-readable snapshot of the analysis pipeline's processing state.
+/// Engine-owned and presentation-free: counts of persisted batch statuses
+/// plus the live in-flight tracker. Human progress strings and UI state are
+/// deliberately not part of this model.
+struct ActivityProcessingStatus: Sendable, Equatable {
+  /// Batches that finished analyzing successfully. Both persisted spellings
+  /// count: `analyzed` (written by the provider pipeline) and `completed`
+  /// (written by the analysis completion handler) are the same outcome.
+  let analyzedBatchCount: Int
+
+  /// Batches queued but not yet running, including batches reset for
+  /// reprocessing (persisted status `pending`).
+  let pendingBatchCount: Int
+
+  /// Batches whose LLM processing is executing right now.
+  let inFlightBatchCount: Int
+
+  /// Batches in persisted terminal-failure status (`failed`).
+  let failedBatchCount: Int
+
+  /// Whether any inference work is executing right now.
+  var isAnalyzing: Bool { inFlightBatchCount > 0 }
+
+  /// Read-only normalization of the two terminal-success spellings. This
+  /// interprets persisted values; it never rewrites or migrates them.
+  static func isSuccessStatus(_ status: String) -> Bool {
+    status == "analyzed" || status == "completed"
+  }
 }

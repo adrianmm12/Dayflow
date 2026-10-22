@@ -68,6 +68,16 @@ final class AnalysisManager: AnalysisManaging {
     return inFlightBatchIds.contains(batchId)
   }
 
+  /// Number of batches whose LLM processing is executing right now. Locked
+  /// read of the in-memory tracker, which is authoritative over the persisted
+  /// "processing" batch status: a mid-run quit can leave that status behind
+  /// for batches that are no longer running.
+  var inFlightBatchCount: Int {
+    inFlightLock.lock()
+    defer { inFlightLock.unlock() }
+    return inFlightBatchIds.count
+  }
+
   private func setBatchInFlight(_ batchId: Int64, _ isInFlight: Bool) {
     inFlightLock.lock()
     defer { inFlightLock.unlock() }
