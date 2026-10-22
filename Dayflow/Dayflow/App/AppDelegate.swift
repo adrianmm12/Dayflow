@@ -170,6 +170,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       flushPendingDeepLinks()
     }
 
+    // Route engine analysis lifecycle events (failure toast, getting-started
+    // milestone) to this app's product surfaces. Must be installed before the
+    // analysis job starts below.
+    LLMService.eventSink = DayflowLLMServiceEvents()
+
     // Start the provider-routed analysis background job
     setupTimelineAnalysis()
 

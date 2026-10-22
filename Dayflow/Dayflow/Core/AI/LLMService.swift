@@ -3,11 +3,9 @@
 //  Dayflow
 //
 
-import AppKit
 import Combine
 import Foundation
 import GRDB
-import SwiftUI
 
 private final class TimelineCardGenerationGate: @unchecked Sendable {
   private let lock = NSLock()
@@ -97,6 +95,20 @@ protocol LLMServicing {
 final class LLMService: LLMServicing {
   static let shared: LLMServicing = LLMService()
   private static let timelineCardGenerationGate = TimelineCardGenerationGate()
+
+  // MARK: - Host event sink
+
+  /// Reports user-facing analysis lifecycle events to the host app through
+  /// the engine-owned LLMServiceEvents seam. Unset (nil) is the headless
+  /// default: events are silently dropped.
+  private static let eventSinkLock = NSLock()
+  nonisolated(unsafe) private static var _eventSink: (any LLMServiceEvents)?
+
+  static var eventSink: (any LLMServiceEvents)? {
+    get { eventSinkLock.withLock { _eventSink } }
+    set { eventSinkLock.withLock { _eventSink = newValue } }
+  }
+
   private static let timelineFailureToastLastShownDayByKindDefaultsKey =
     "timelineFailureToastLastShownDayByKind"
   private static let timelineFailureToastThrottleQueue = DispatchQueue(
@@ -513,7 +525,7 @@ final class LLMService: LLMServicing {
       batchId: batchId
     )
     AnalyticsService.shared.capture("llm_timeline_failure_toast_shown", payload.analyticsProps)
-    TimelineFailureToastCenter.post(payload)
+    LLMService.eventSink?.analysisFailureNeedsUserAttention(payload)
   }
 
   /// Recorded time from the last 24 hours that failed and is waiting to be retried.
@@ -1032,12 +1044,10 @@ final class LLMService: LLMServicing {
           ])
 
         // Whatever the failure card asked the user to fix is working again.
-        TimelineFailureToastCenter.hide()
+        LLMService.eventSink?.analysisFailureRecovered()
 
         let analyzedCardCount = cards.count
-        Task { @MainActor in
-          GettingStarted.handleBatchAnalyzed(cardCount: analyzedCardCount)
-        }
+        LLMService.eventSink?.batchAnalyzed(cardCount: analyzedCardCount)
 
         completion(.success(ProcessedBatchResult(cards: cards, cardIds: insertedCardIds)))
 
