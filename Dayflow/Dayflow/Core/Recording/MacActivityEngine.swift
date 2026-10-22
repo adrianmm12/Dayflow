@@ -20,6 +20,30 @@ final class MacActivityEngine {
   /// system events and RecordingState until shutdown.
   private var recorder: ScreenRecorder?
 
+  /// Storage backing the engine's directly-owned façade operations: the
+  /// timeline-card range query in `activities(from:to:)` and the persisted
+  /// batch counts in `processingStatus()`. Production constructs the engine
+  /// with no arguments and gets the shared storage database; tests and future
+  /// engine hosts can inject an isolated `StorageManager`.
+  ///
+  /// Capabilities deliberately NOT yet backed by this dependency:
+  /// - `reprocessDay(...)` still delegates to `AnalysisManager.shared`, whose
+  ///   storage remains global — injected storage does not control it.
+  /// - `processingStatus()`'s in-flight count still reads
+  ///   `AnalysisManager.shared`'s in-memory tracker, so a snapshot can combine
+  ///   injected-storage batch counts with production in-flight state (0 when
+  ///   no global analysis job is running, e.g. isolated tests).
+  /// - `shutdown()` still checkpoints `StorageManager.shared`: the
+  ///   `StorageManaging` protocol exposes no checkpoint operation.
+  private let storage: any StorageManaging
+
+  /// The `storage` parameter defaults to the shared production storage;
+  /// `MacActivityEngine()` therefore continues to resolve to
+  /// `StorageManager.shared` with no call-site changes.
+  init(storage: any StorageManaging = StorageManager.shared) {
+    self.storage = storage
+  }
+
   /// Seeds the recording flag low, then constructs the recorder so the first
   /// transition to true will reliably start capture.
   ///
@@ -55,6 +79,12 @@ final class MacActivityEngine {
   /// checkpointing (and truncating) the database WAL. The open capture
   /// segment is finalized separately by the recorder's own will-terminate
   /// observer (FrameStore.finishCurrentSegment()).
+  ///
+  /// Still checkpoints the shared production storage directly: the
+  /// `StorageManaging` protocol does not expose checkpointing, and widening
+  /// it just for this call would break the protocol's other conformers. An
+  /// engine constructed with isolated storage therefore still flushes the
+  /// production WAL here; revisit when shutdown is redesigned.
   func shutdown() {
     StorageManager.shared.checkpoint(mode: .truncate)
   }
@@ -62,14 +92,16 @@ final class MacActivityEngine {
   // MARK: - Read-only timeline activity access
 
   /// The persisted timeline cards whose time overlaps the given range, oldest
-  /// first, exactly as storage returns them: no category filtering (System /
-  /// "Processing failed" cards are included) and soft-deleted cards are
-  /// excluded. Reads the shared storage database synchronously.
+  /// first, exactly as the engine's storage returns them: no category
+  /// filtering (System / "Processing failed" cards are included) and
+  /// soft-deleted cards are excluded. Reads the storage synchronously (the
+  /// shared production database unless the engine was constructed with
+  /// isolated storage).
   ///
   /// Recent-activity queries compose naturally:
   /// `activities(from: Date().addingTimeInterval(-lookback), to: Date())`.
   func activities(from: Date, to: Date) -> [TimelineCard] {
-    StorageManager.shared.fetchTimelineCardsByTimeRange(from: from, to: to)
+    storage.fetchTimelineCardsByTimeRange(from: from, to: to)
   }
 
   // MARK: - Reprocessing
@@ -83,6 +115,11 @@ final class MacActivityEngine {
   /// its observations, resets the day's batches to pending, and re-runs each
   /// batch sequentially through the provider pipeline. Progress messages and
   /// the completion result are delivered on the main thread.
+  ///
+  /// Still delegates to `AnalysisManager.shared`, whose storage remains
+  /// global: an engine constructed with isolated storage does NOT reprocess
+  /// through that injected store. Storage injection for reprocessing is a
+  /// later, dedicated `AnalysisManager` task.
   func reprocessDay(
     _ day: String,
     progressHandler: @escaping (String) -> Void,
@@ -96,18 +133,22 @@ final class MacActivityEngine {
 
   /// A read-only, point-in-time snapshot of the analysis pipeline's state.
   ///
-  /// Persisted batch statuses are read from the storage database. The
-  /// in-flight count comes from the analysis manager's in-memory tracker,
-  /// which is authoritative for "executing right now": a persisted
-  /// "processing" status can be left behind by a mid-run quit, so it is not
-  /// reported as active work (such batches are retried automatically).
+  /// Persisted batch statuses are read from the engine's storage (the shared
+  /// production database unless the engine was constructed with isolated
+  /// storage). The in-flight count comes from the shared analysis manager's
+  /// in-memory tracker, which is authoritative for "executing right now": a
+  /// persisted "processing" status can be left behind by a mid-run quit, so
+  /// it is not reported as active work (such batches are retried
+  /// automatically). A snapshot can therefore combine injected-storage batch
+  /// counts with production/global in-flight state (0 when no global analysis
+  /// job is running, e.g. isolated tests).
   ///
   /// The counts are point-in-time per source and not mutually atomic: a
   /// batch transitioning between states can momentarily appear in, or be
   /// missing from, one count. Terminal no-output outcomes (`failed_empty`,
   /// `skipped_short`) are neither success nor failure here.
   func processingStatus() -> ActivityProcessingStatus {
-    let batches = StorageManager.shared.allBatches()
+    let batches = storage.allBatches()
     return ActivityProcessingStatus(
       analyzedBatchCount: batches.filter { ActivityProcessingStatus.isSuccessStatus($0.status) }
         .count,
