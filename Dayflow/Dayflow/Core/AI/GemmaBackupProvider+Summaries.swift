@@ -71,7 +71,7 @@ extension GemmaBackupProvider {
     }
     let observationsText = observationLines.joined(separator: "\n")
 
-    let descriptorList = categories.isEmpty ? CategoryStore.descriptorsForLLM() : categories
+    let descriptorList = categories.isEmpty ? CategoryPersistence.descriptorsForLLM() : categories
     let categoryLines: [String] = descriptorList.enumerated().map { index, descriptor in
       var description =
         descriptor.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

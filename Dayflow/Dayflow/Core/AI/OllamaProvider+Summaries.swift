@@ -88,7 +88,7 @@ extension OllamaProvider {
     }
     let observationsText: String = stripUserReferences(observationLines.joined(separator: "\n\n"))
 
-    let descriptorList = categories.isEmpty ? CategoryStore.descriptorsForLLM() : categories
+    let descriptorList = categories.isEmpty ? CategoryPersistence.descriptorsForLLM() : categories
     let categoryLines: [String] = descriptorList.enumerated().map { index, descriptor in
       var description =
         descriptor.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

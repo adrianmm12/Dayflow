@@ -68,7 +68,7 @@ func firstCategoryLookup(
 final class CategoryStore: ObservableObject {
   static let shared = CategoryStore()
   enum StoreKeys {
-    static let categories = "colorCategories"
+    static let categories = CategoryPersistence.persistedCategoriesKey
     static let hasUsedApp = "hasUsedApp"
     static let onboardingSelectedRole = "onboardingSelectedRole"
     static let onboardingAppliedCategoryPreset = "onboardingAppliedCategoryPreset"
@@ -237,28 +237,10 @@ final class CategoryStore: ObservableObject {
 }
 
 extension CategoryStore {
+  // Compatibility: engine callers use CategoryPersistence.descriptorsForLLM()
+  // directly; product callers keep this entry point, now delegating.
   nonisolated static func descriptorsForLLM() -> [LLMCategoryDescriptor] {
-    let categories = CategoryPersistence.loadPersistedCategories()
-    let effective = categories.isEmpty ? CategoryPersistence.defaultCategories : categories
-    return
-      effective
-      .sorted { $0.order < $1.order }
-      .map { category in
-        LLMCategoryDescriptor(
-          id: category.id,
-          name: category.name,
-          colorHex: category.colorHex,
-          description: {
-            if category.isIdle {
-              return "Use when the user is idle for more than half of this period."
-            }
-            let trimmed = category.details.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-          }(),
-          isSystem: category.isSystem,
-          isIdle: category.isIdle
-        )
-      }
+    CategoryPersistence.descriptorsForLLM()
   }
 }
 
@@ -534,8 +516,12 @@ private enum OnboardingCategoryPreset: String {
 }
 
 enum CategoryPersistence {
-  static func loadPersistedCategories() -> [TimelineCategory] {
-    guard let data = UserDefaults.standard.data(forKey: CategoryStore.StoreKeys.categories) else {
+  /// UserDefaults key for persisted categories. Canonical home of the
+  /// historical key string (unchanged); CategoryStore.StoreKeys references it.
+  static let persistedCategoriesKey = "colorCategories"
+
+  static func loadPersistedCategories(from defaults: UserDefaults = .standard) -> [TimelineCategory] {
+    guard let data = defaults.data(forKey: persistedCategoriesKey) else {
       return []
     }
     let decoder = JSONDecoder()
@@ -638,5 +624,41 @@ enum CategoryPersistence {
     )
     updated.append(idle)
     return updated.sorted { $0.order < $1.order }
+  }
+
+  // MARK: - LLM prompt descriptors
+
+  /// The category descriptors timeline prompts are built from. Engine-owned:
+  /// pure persisted-or-default category data, no UI state involved.
+  static func descriptorsForLLM() -> [LLMCategoryDescriptor] {
+    descriptors(from: effectiveCategories())
+  }
+
+  /// Persisted categories, or the defaults when nothing has been stored yet.
+  static func effectiveCategories() -> [TimelineCategory] {
+    let persisted = loadPersistedCategories()
+    return persisted.isEmpty ? defaultCategories : persisted
+  }
+
+  static func descriptors(from categories: [TimelineCategory]) -> [LLMCategoryDescriptor] {
+    return
+      categories
+      .sorted { $0.order < $1.order }
+      .map { category in
+        LLMCategoryDescriptor(
+          id: category.id,
+          name: category.name,
+          colorHex: category.colorHex,
+          description: {
+            if category.isIdle {
+              return "Use when the user is idle for more than half of this period."
+            }
+            let trimmed = category.details.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+          }(),
+          isSystem: category.isSystem,
+          isIdle: category.isIdle
+        )
+      }
   }
 }

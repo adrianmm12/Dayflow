@@ -826,7 +826,7 @@ final class LLMService: LLMServicing {
             batchObservations: batchObservations,
             existingCards: existingActivityCards,
             currentTime: currentTime,
-            categories: CategoryStore.descriptorsForLLM(),
+            categories: CategoryPersistence.descriptorsForLLM(),
             hasPreviousCardWithinFiveMinutes: hasPreviousCardWithinFiveMinutes
           )
         }
