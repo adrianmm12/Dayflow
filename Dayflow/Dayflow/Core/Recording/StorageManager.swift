@@ -197,12 +197,79 @@ final class StorageManager: StorageManaging, @unchecked Sendable {
   var checkpointTimer: DispatchSourceTimer?
   var backupTimer: DispatchSourceTimer?
 
-  init() {
-    UserDefaultsMigrator.migrateIfNeeded()
-    StoragePathMigrator.migrateIfNeeded()
+  // MARK: - Construction configuration
 
-    let appSupport = fileMgr.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    let baseDir = appSupport.appendingPathComponent("Dayflow", isDirectory: true)
+  /// Construction seam for `StorageManager`.
+  ///
+  /// Production (`StorageManager.shared`) always uses `.production()`, which resolves the
+  /// real Application Support/Dayflow tree and enables every legacy migration and background
+  /// maintenance task with exactly the previous behavior.
+  ///
+  /// Isolated instances (tests, future engine hosts) are constructed against their own base
+  /// directory. Legacy sandbox migration is disabled because it can inspect and move real
+  /// user files, and background maintenance is disabled because it schedules recurring work
+  /// (purge, WAL checkpoints, backups) whose purge also prunes the shared
+  /// `TimelapseStorageManager` directory and could outlive a temporary directory.
+  ///
+  /// Named `StorageConfiguration` (not `Configuration`) to avoid shadowing GRDB's
+  /// `Configuration` type within `StorageManager` and its extensions.
+  struct StorageConfiguration {
+    /// Base directory owning `recordings/`, `backups/`, and `chunks.sqlite`
+    /// (the equivalent of `…/Application Support/Dayflow`).
+    let baseDirectory: URL
+
+    /// Runs the legacy sandbox→unsandboxed migrations (UserDefaults, filesystem relocation,
+    /// legacy database path rewrites). Production only: it can inspect and move real user
+    /// files.
+    let performsLegacyMigration: Bool
+
+    /// Starts the initial purge plus the hourly purge, 5-minute WAL checkpoint, and daily
+    /// backup schedulers. Production only: purge also prunes the shared timelapses directory.
+    let startsBackgroundMaintenance: Bool
+
+    /// The production configuration: the real Application Support/Dayflow tree with all
+    /// migrations and maintenance enabled. Resolving it is a pure path lookup with no side
+    /// effects.
+    static func production() -> StorageConfiguration {
+      let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      return StorageConfiguration(
+        baseDirectory: appSupport.appendingPathComponent("Dayflow", isDirectory: true),
+        performsLegacyMigration: true,
+        startsBackgroundMaintenance: true
+      )
+    }
+
+    /// An isolated configuration rooted at `baseDirectory`: no legacy migration and no
+    /// background maintenance. Only the supplied directory tree is ever touched.
+    static func isolated(baseDirectory: URL) -> StorageConfiguration {
+      StorageConfiguration(
+        baseDirectory: baseDirectory,
+        performsLegacyMigration: false,
+        startsBackgroundMaintenance: false
+      )
+    }
+  }
+
+  /// Production initializer: identical behavior to before (real Dayflow tree, legacy
+  /// migrations, background maintenance). `StorageManager.shared` uses this.
+  convenience init() {
+    self.init(configuration: .production())
+  }
+
+  /// Creates an isolated `StorageManager` against its own directory tree. Legacy migration
+  /// and background maintenance are disabled, so neither real Dayflow data nor shared
+  /// singletons (e.g. timelapses purge) are touched.
+  convenience init(isolatedAt baseDirectory: URL) {
+    self.init(configuration: .isolated(baseDirectory: baseDirectory))
+  }
+
+  init(configuration: StorageConfiguration) {
+    if configuration.performsLegacyMigration {
+      UserDefaultsMigrator.migrateIfNeeded()
+      StoragePathMigrator.migrateIfNeeded()
+    }
+
+    let baseDir = configuration.baseDirectory
     let recordingsDir = baseDir.appendingPathComponent("recordings", isDirectory: true)
     let backupDir = baseDir.appendingPathComponent("backups", isDirectory: true)
 
@@ -255,19 +322,23 @@ final class StorageManager: StorageManaging, @unchecked Sendable {
     performIntegrityCheck()
 
     migrate()
-    migrateLegacyChunkPathsIfNeeded()
+    if configuration.performsLegacyMigration {
+      migrateLegacyChunkPathsIfNeeded()
+    }
     truncateOversizedLLMCallBodiesIfNeeded()
 
-    // Run initial purge, then schedule hourly
-    purgeIfNeeded()
-    TimelapseStorageManager.shared.purgeIfNeeded()
-    startPurgeScheduler()
+    if configuration.startsBackgroundMaintenance {
+      // Run initial purge, then schedule hourly
+      purgeIfNeeded()
+      TimelapseStorageManager.shared.purgeIfNeeded()
+      startPurgeScheduler()
 
-    // Schedule WAL checkpoints every 5 minutes to prevent data loss
-    startCheckpointScheduler()
+      // Schedule WAL checkpoints every 5 minutes to prevent data loss
+      startCheckpointScheduler()
 
-    // Schedule daily backups
-    startBackupScheduler()
+      // Schedule daily backups
+      startBackupScheduler()
+    }
   }
 
   // TEMPORARY DEBUG: Timing helpers for database operations
