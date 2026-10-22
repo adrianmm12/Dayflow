@@ -112,8 +112,22 @@ final class LLMService: LLMServicing {
   /// does not make inference isolated.
   private let storage: any StorageManaging
 
-  init(storage: any StorageManaging = StorageManager.shared) {
+  /// Provider-execution seam: builds the `TimelineProviderContext` (the
+  /// transcription/card-generation closures `processBatch` invokes) for a
+  /// routing-chosen `LLMProviderID`. Routing — deciding WHICH provider —
+  /// stays in `LLMProviderRoutingStore`; this dependency only decides HOW
+  /// that provider's execution is constructed. Production leaves it nil and
+  /// gets the exact existing construction chain (keychain/defaults-backed
+  /// real providers). Tests inject a fake that returns deterministic
+  /// closures without touching network, CLI, keychain, or `LLMLogger`.
+  private let providerContextFor: ((LLMProviderID) throws -> TimelineProviderContext)?
+
+  init(
+    storage: any StorageManaging = StorageManager.shared,
+    providerContextFor: ((LLMProviderID) throws -> TimelineProviderContext)? = nil
+  ) {
     self.storage = storage
+    self.providerContextFor = providerContextFor
   }
 
   // MARK: - Host event sink
@@ -138,12 +152,21 @@ final class LLMService: LLMServicing {
   /// Card generators report `rewriteSpan`, the stretch of timeline (Unix seconds) their cards
   /// replace. nil means the whole lookback window is replaced, as for providers that are shown
   /// every card in it.
-  private typealias ActivityCardsGenerator =
+  ///
+  /// Internal (not private) because it is part of the provider-execution seam
+  /// surface: tests inject a fake `TimelineProviderContext` whose actions
+  /// match these signatures.
+  typealias ActivityCardsGenerator =
     ([Observation], ActivityGenerationContext, Int64?) async throws -> (
       cards: [ActivityCardData], rewriteSpan: Range<Int>?, log: LLMCall
     )
 
-  private struct BatchProviderActions {
+  /// The provider execution surface for one batch-processing provider: the
+  /// transcription and card-generation closures `processBatch` invokes.
+  /// Internal (not private) so an injected fake provider context can
+  /// construct deterministic stand-ins without touching any real provider,
+  /// keychain, network, or `LLMLogger`.
+  struct BatchProviderActions {
     let transcribeScreenshots:
       ([Screenshot], Date, Int64?) async throws -> (observations: [Observation], log: LLMCall)
     let generateActivityCards: ActivityCardsGenerator
@@ -175,7 +198,10 @@ final class LLMService: LLMServicing {
     let generateTextStreaming: ((String) -> AsyncThrowingStream<String, Error>)?
   }
 
-  private struct TimelineProviderContext {
+  /// One batch provider's execution identity: routing-chosen provider id,
+  /// display label, actions, and (Gemini-only) Gemma fallback bookkeeping.
+  /// Internal (not private) as part of the provider-execution seam surface.
+  struct TimelineProviderContext {
     let id: LLMProviderID
     let providerLabel: String
     let actions: BatchProviderActions
@@ -363,6 +389,19 @@ final class LLMService: LLMServicing {
   private func makeTimelineProviderContext(for providerID: LLMProviderID) throws
     -> TimelineProviderContext
   {
+    // Injected provider-execution seam: a test-injected factory replaces the
+    // real provider construction (routing has already chosen `providerID`).
+    if let providerContextFor {
+      return try providerContextFor(providerID)
+    }
+    return try makeDefaultTimelineProviderContext(for: providerID)
+  }
+
+  /// Production provider construction: the exact pre-existing chain
+  /// (keychain/defaults-backed real providers).
+  private func makeDefaultTimelineProviderContext(for providerID: LLMProviderID) throws
+    -> TimelineProviderContext
+  {
     let providerBundle = try makeBatchProvider(for: providerID)
     return TimelineProviderContext(
       id: providerID,
@@ -380,7 +419,9 @@ final class LLMService: LLMServicing {
     return secondary
   }
 
-  private final class GemmaFallbackState {
+  /// Gemini's in-batch Gemma fallback bookkeeping. Internal (not private) as
+  /// part of the provider-execution seam surface (fakes pass nil).
+  final class GemmaFallbackState {
     var preferGemma = false
     var usedGemmaForCardGeneration = false
   }
