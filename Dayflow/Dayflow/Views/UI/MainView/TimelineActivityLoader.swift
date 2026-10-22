@@ -73,9 +73,10 @@ enum TimelineActivityLoader {
     return isRetryableFailedCard(card, storageManager: storageManager)
   }
 
+  // Delegates to the engine-owned rule in RetryEligibility so the analysis
+  // pipeline and the UI retry surfaces share one implementation.
   static func isRetryableFailedCard(_ card: TimelineCard, storageManager: StorageManaging) -> Bool {
-    guard card.title == "Processing failed", let batchId = card.batchId else { return false }
-    return hasRetrySourceScreenshots(for: batchId, storageManager: storageManager)
+    RetryEligibility.isRetryableFailedCard(card, storageManager: storageManager)
   }
 
   private static func displayableCards(
@@ -83,13 +84,6 @@ enum TimelineActivityLoader {
     storageManager: StorageManaging
   ) -> [TimelineCard] {
     cards.filter { shouldDisplay($0, storageManager: storageManager) }
-  }
-
-  private static func hasRetrySourceScreenshots(
-    for batchId: Int64,
-    storageManager: StorageManaging
-  ) -> Bool {
-    storageManager.screenshotsForBatch(batchId).contains(where: \.isAvailable)
   }
 
   static func buildActivities(from cards: [TimelineCard]) -> [TimelineActivity] {

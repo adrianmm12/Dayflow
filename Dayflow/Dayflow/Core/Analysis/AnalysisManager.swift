@@ -505,7 +505,7 @@ final class AnalysisManager: AnalysisManaging {
     var retryableBatchIds = Set<Int64>()
     for day in days {
       for card in store.fetchTimelineCards(forDay: day)
-      where TimelineActivityLoader.isRetryableFailedCard(card, storageManager: store) {
+      where RetryEligibility.isRetryableFailedCard(card, storageManager: store) {
         if let batchId = card.batchId {
           retryableBatchIds.insert(batchId)
         }
