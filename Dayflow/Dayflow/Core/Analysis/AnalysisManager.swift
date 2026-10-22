@@ -15,6 +15,10 @@ protocol AnalysisManaging {
   func startAnalysisJob()
   func stopAnalysisJob()
   func triggerAnalysisNow()
+  /// Batches whose LLM processing is executing right now, per the manager's
+  /// in-memory in-flight tracker. Read-only semantic snapshot; no locks or
+  /// mutable internals are exposed.
+  var inFlightBatchCount: Int { get }
   func reprocessDay(
     _ day: String, progressHandler: @escaping (String) -> Void,
     completion: @escaping (Result<Void, Error>) -> Void)

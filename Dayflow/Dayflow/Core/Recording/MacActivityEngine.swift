@@ -26,22 +26,32 @@ final class MacActivityEngine {
   /// with no arguments and gets the shared storage database; tests and future
   /// engine hosts can inject an isolated `StorageManager`.
   ///
-  /// Capabilities deliberately NOT yet backed by this dependency:
-  /// - `reprocessDay(...)` still delegates to `AnalysisManager.shared`, whose
-  ///   storage remains global — injected storage does not control it.
-  /// - `processingStatus()`'s in-flight count still reads
-  ///   `AnalysisManager.shared`'s in-memory tracker, so a snapshot can combine
-  ///   injected-storage batch counts with production in-flight state (0 when
-  ///   no global analysis job is running, e.g. isolated tests).
-  /// - `shutdown()` still checkpoints `StorageManager.shared`: the
-  ///   `StorageManaging` protocol exposes no checkpoint operation.
+  /// Analysis behavior (`startAnalysisJob()`, `reprocessDay(...)`, and the
+  /// in-flight count in `processingStatus()`) is backed by the injected
+  /// `analysis` dependency below; an engine composed with isolated storage
+  /// AND an isolated analysis manager is coherent across both. The one
+  /// remaining direct-storage exception is `shutdown()`, which still
+  /// checkpoints `StorageManager.shared` (a known, documented follow-up).
   private let storage: any StorageManaging
 
-  /// The `storage` parameter defaults to the shared production storage;
+  /// Analysis backing the engine's analysis-facing façade operations:
+  /// scheduler startup, day reprocessing, and the in-flight count in
+  /// `processingStatus()`. Production defaults to the shared manager; tests
+  /// and future engine hosts inject an `AnalysisManaging` instance (e.g. an
+  /// `AnalysisManager` wired to the same isolated storage and a fake
+  /// `LLMServicing`).
+  private let analysis: any AnalysisManaging
+
+  /// Both parameters default to the shared production singletons;
   /// `MacActivityEngine()` therefore continues to resolve to
-  /// `StorageManager.shared` with no call-site changes.
-  init(storage: any StorageManaging = StorageManager.shared) {
+  /// `StorageManager.shared` + `AnalysisManager.shared` with no call-site
+  /// changes.
+  init(
+    storage: any StorageManaging = StorageManager.shared,
+    analysis: any AnalysisManaging = AnalysisManager.shared
+  ) {
     self.storage = storage
+    self.analysis = analysis
   }
 
   /// Seeds the recording flag low, then constructs the recorder so the first
@@ -62,8 +72,12 @@ final class MacActivityEngine {
   /// initialization complete first. The host must install its LLMService
   /// event sink before calling this.
   func startAnalysisJob() {
+    // Capture the injected dependency directly (not self): the delayed start
+    // must fire even if this engine instance is deallocated within the delay,
+    // exactly as the previous singleton call behaved.
+    let analysis = self.analysis
     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-      AnalysisManager.shared.startAnalysisJob()
+      analysis.startAnalysisJob()
       print("AppDelegate: LLM analysis job started")
       let providerID = (try? LLMProviderRoutingStore.load())?.primary
       AnalyticsService.shared.capture(
@@ -116,16 +130,15 @@ final class MacActivityEngine {
   /// batch sequentially through the provider pipeline. Progress messages and
   /// the completion result are delivered on the main thread.
   ///
-  /// Still delegates to `AnalysisManager.shared`, whose storage remains
-  /// global: an engine constructed with isolated storage does NOT reprocess
-  /// through that injected store. Storage injection for reprocessing is a
-  /// later, dedicated `AnalysisManager` task.
+  /// Delegates to the engine's injected analysis dependency: an engine
+  /// composed with isolated storage + an isolated analysis manager reprocesses
+  /// entirely through those dependencies.
   func reprocessDay(
     _ day: String,
     progressHandler: @escaping (String) -> Void,
     completion: @escaping (Result<Void, Error>) -> Void
   ) {
-    AnalysisManager.shared.reprocessDay(
+    analysis.reprocessDay(
       day, progressHandler: progressHandler, completion: completion)
   }
 
@@ -133,15 +146,13 @@ final class MacActivityEngine {
 
   /// A read-only, point-in-time snapshot of the analysis pipeline's state.
   ///
-  /// Persisted batch statuses are read from the engine's storage (the shared
-  /// production database unless the engine was constructed with isolated
-  /// storage). The in-flight count comes from the shared analysis manager's
-  /// in-memory tracker, which is authoritative for "executing right now": a
-  /// persisted "processing" status can be left behind by a mid-run quit, so
-  /// it is not reported as active work (such batches are retried
-  /// automatically). A snapshot can therefore combine injected-storage batch
-  /// counts with production/global in-flight state (0 when no global analysis
-  /// job is running, e.g. isolated tests).
+  /// Persisted batch statuses are read from the engine's storage and the
+  /// in-flight count from the engine's injected analysis dependency, which is
+  /// authoritative for "executing right now": a persisted "processing" status
+  /// can be left behind by a mid-run quit, so it is not reported as active
+  /// work (such batches are retried automatically). With production wiring
+  /// both come from the shared singletons; an engine composed with isolated
+  /// dependencies reads a coherent pair.
   ///
   /// The counts are point-in-time per source and not mutually atomic: a
   /// batch transitioning between states can momentarily appear in, or be
@@ -153,7 +164,7 @@ final class MacActivityEngine {
       analyzedBatchCount: batches.filter { ActivityProcessingStatus.isSuccessStatus($0.status) }
         .count,
       pendingBatchCount: batches.filter { $0.status == "pending" }.count,
-      inFlightBatchCount: AnalysisManager.shared.inFlightBatchCount,
+      inFlightBatchCount: analysis.inFlightBatchCount,
       failedBatchCount: batches.filter { $0.status == "failed" }.count
     )
   }
