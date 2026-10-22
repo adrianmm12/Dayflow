@@ -96,6 +96,26 @@ final class LLMService: LLMServicing {
   static let shared: LLMServicing = LLMService()
   private static let timelineCardGenerationGate = TimelineCardGenerationGate()
 
+  /// Storage seam: every persistence operation the service performs directly
+  /// — batch lookups and status updates, screenshot reads, observation
+  /// persistence, timeline-card replacement (including error cards), the
+  /// failure-toast's failed-time reckoning, and the post-batch passive
+  /// checkpoint — goes through this dependency. Production
+  /// (`LLMService.shared` and any no-argument construction) resolves to
+  /// `StorageManager.shared`; tests and future engine hosts inject an
+  /// isolated `StorageManager`.
+  ///
+  /// Construction is side-effect-free: no tasks, timers, network, or storage
+  /// access; providers are built per call from local keychain/defaults.
+  /// Note the provider boundary: a non-empty batch still reaches real
+  /// provider machinery (routing, keychain, network). Storage injection alone
+  /// does not make inference isolated.
+  private let storage: any StorageManaging
+
+  init(storage: any StorageManaging = StorageManager.shared) {
+    self.storage = storage
+  }
+
   // MARK: - Host event sink
 
   /// Reports user-facing analysis lifecycle events to the host app through
@@ -531,7 +551,7 @@ final class LLMService: LLMServicing {
   /// Recorded time from the last 24 hours that failed and is waiting to be retried.
   private func failedRecordingSecondsInLastDay(now: Date = Date()) -> Int {
     let cutoff = Int(now.timeIntervalSince1970) - 24 * 60 * 60
-    return StorageManager.shared.allBatches()
+    return storage.allBatches()
       .filter { $0.status == "failed" && $0.start >= cutoff }
       .reduce(0) { total, batch in total + max(0, batch.end - batch.start) }
   }
@@ -672,7 +692,7 @@ final class LLMService: LLMServicing {
       }
 
       // Get batch info first (outside do-catch so it's available in catch block)
-      let batches = StorageManager.shared.allBatches()
+      let batches = storage.allBatches()
       guard let batchInfo = batches.first(where: { $0.0 == batchId }) else {
         completion(
           .failure(
@@ -774,13 +794,13 @@ final class LLMService: LLMServicing {
         var usedProviderBackup = startup.usedProviderBackup
 
         // Mark batch as processing
-        StorageManager.shared.updateBatch(batchId, status: "processing")
+        storage.updateBatch(batchId, status: "processing", reason: nil)
 
         // Get batch start time for timestamp conversion
         let batchStartDate = Date(timeIntervalSince1970: TimeInterval(batchStartTs))
 
         // Try screenshot-based transcription first (new system)
-        let screenshots = StorageManager.shared.screenshotsForBatch(batchId)
+        let screenshots = storage.screenshotsForBatch(batchId)
         var observations: [Observation] = []
 
         guard !screenshots.isEmpty else {
@@ -796,11 +816,11 @@ final class LLMService: LLMServicing {
 
         func makeGenerationContext(batchObservations: [Observation]) -> ActivityGenerationContext {
           // Fetch existing timeline cards that overlap with the recent batching window.
-          let existingTimelineCards = StorageManager.shared.fetchTimelineCardsByTimeRange(
+          let existingTimelineCards = storage.fetchTimelineCardsByTimeRange(
             from: windowStartTime,
             to: currentTime
           )
-          let hasPreviousCardWithinFiveMinutes = StorageManager.shared.hasTimelineCardConnected(
+          let hasPreviousCardWithinFiveMinutes = storage.hasTimelineCardConnected(
             toBatchStartingAt: batchStartTime,
             maxGap: 5 * 60
           )
@@ -852,7 +872,7 @@ final class LLMService: LLMServicing {
             let result = try await generateTimeline(
               screenshots, makeGenerationContext(batchObservations: []), batchId)
             observations = result.observations
-            StorageManager.shared.saveObservations(batchId: batchId, observations: observations)
+            storage.saveObservations(batchId: batchId, observations: observations)
             oneStepCards = result.cards
             rewriteSpan = result.rewriteSpan
             print(
@@ -908,7 +928,7 @@ final class LLMService: LLMServicing {
           usedProviderBackup = usedProviderBackup || transcribeResult.usedProviderBackup
           print("📸 [LLMService] Transcribed → \(observations.count) observations")
 
-          StorageManager.shared.saveObservations(batchId: batchId, observations: observations)
+          storage.saveObservations(batchId: batchId, observations: observations)
 
           // If no observations, mark batch as complete with no activities
           guard !observations.isEmpty else {
@@ -928,7 +948,7 @@ final class LLMService: LLMServicing {
                 "provider_label": activeContext.providerLabel,
                 "transcribe_latency_ms": Int((transcribeLog.latency ?? 0) * 1000),
               ])
-            StorageManager.shared.updateBatch(batchId, status: "analyzed")
+            storage.updateBatch(batchId, status: "analyzed", reason: nil)
             completion(.success(ProcessedBatchResult(cards: [], cardIds: [])))
             return
           }
@@ -943,7 +963,7 @@ final class LLMService: LLMServicing {
           }
 
           // Fetch observations from the recent batching window (instead of just current batch).
-          let recentObservations = StorageManager.shared.fetchObservationsByTimeRange(
+          let recentObservations = storage.fetchObservationsByTimeRange(
             from: windowStartTime,
             to: currentTime
           )
@@ -988,7 +1008,7 @@ final class LLMService: LLMServicing {
         // this one began, so a retry finishing late must not delete them. Providers shown the
         // whole window saw those cards and rewrote them, so theirs are replaced as before.
         let keepNewerCardsAfter = rewriteSpan == nil ? nil : batchStartTime
-        let (insertedCardIds, deletedVideoPaths) = StorageManager.shared
+        let (insertedCardIds, deletedVideoPaths) = storage
           .replaceTimelineCardsInRange(
             from: replacementRange.from,
             to: replacementRange.to,
@@ -1022,10 +1042,10 @@ final class LLMService: LLMServicing {
         }
 
         // Mark batch as complete
-        StorageManager.shared.updateBatch(batchId, status: "analyzed")
+        storage.updateBatch(batchId, status: "analyzed", reason: nil)
 
         // Checkpoint WAL after batch processing to ensure data is persisted
-        StorageManager.shared.checkpoint(mode: .passive)
+        storage.checkpointPassive()
 
         // Track analysis batch completed
         AnalyticsService.shared.capture(
@@ -1082,7 +1102,7 @@ final class LLMService: LLMServicing {
 
         // Mark batch as failed. The raw error stays in the batch row for debugging;
         // the user only ever sees the classifier's plain-language copy.
-        StorageManager.shared.updateBatch(
+        storage.updateBatch(
           batchId, status: "failed", reason: error.localizedDescription)
 
         emitTimelineFailureToast(
@@ -1110,7 +1130,7 @@ final class LLMService: LLMServicing {
         // Replace any existing cards in this time range with the error card
         // This matches the happy path behavior and prevents duplicates. A retry can fail after
         // newer batches succeeded, so their cards stay.
-        let (insertedCardIds, deletedVideoPaths) = StorageManager.shared
+        let (insertedCardIds, deletedVideoPaths) = storage
           .replaceTimelineCardsInRange(
             from: batchStartDate,
             to: batchEndDate,

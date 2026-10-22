@@ -57,6 +57,13 @@ private final class RetryEligibilityStorageStub: StorageManaging {
   func saveIdleBatchCard(
     _ card: TimelineCardShell, startTs: Int, endTs: Int, batchId: Int64, extendingCardId: Int64?
   ) -> (cardId: Int64?, deletedVideoPaths: [String]) { fatalError("unexpected call") }
+  func replaceTimelineCardsInRange(
+    from: Date, to: Date, with: [TimelineCardShell], batchId: Int64,
+    keepingNewerBatchesCardsStartingAfter keepAfter: Date?
+  ) -> (insertedIds: [Int64], deletedVideoPaths: [String]) { fatalError("unexpected call") }
+  func hasTimelineCardConnected(toBatchStartingAt batchStart: Date, maxGap: TimeInterval) -> Bool {
+    fatalError("unexpected call")
+  }
   func fetchTimelineCards(forDay day: String) -> [TimelineCard] { fatalError("unexpected call") }
   func fetchTimelineCardsByTimeRange(from: Date, to: Date) -> [TimelineCard] {
     fatalError("unexpected call")

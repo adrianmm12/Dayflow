@@ -48,6 +48,18 @@ protocol StorageManaging: Sendable {
   func fetchTotalMinutesTrackedForWeek(containing date: Date) -> Double
   func replaceTimelineCardsInRange(from: Date, to: Date, with: [TimelineCardShell], batchId: Int64)
     -> (insertedIds: [Int64], deletedVideoPaths: [String])
+  /// The retry-aware variant: cards from batches that started after
+  /// `keepingNewerBatchesCardsStartingAfter` survive the replacement even
+  /// where rounded clock times make them overlap the range. Pass nil to keep
+  /// nothing back (same as the four-argument variant).
+  func replaceTimelineCardsInRange(
+    from: Date, to: Date, with: [TimelineCardShell], batchId: Int64,
+    keepingNewerBatchesCardsStartingAfter keepAfter: Date?
+  ) -> (insertedIds: [Int64], deletedVideoPaths: [String])
+  /// Whether a live timeline card ends within `maxGap` before a batch starting
+  /// at `batchStart` — used to decide whether card generation can extend the
+  /// previous activity instead of starting a new one.
+  func hasTimelineCardConnected(toBatchStartingAt batchStart: Date, maxGap: TimeInterval) -> Bool
   func fetchRecentTimelineCardsForDebug(limit: Int) -> [TimelineCardDebugEntry]
 
   func updateTimelineCardCategory(cardId: Int64, category: String)
