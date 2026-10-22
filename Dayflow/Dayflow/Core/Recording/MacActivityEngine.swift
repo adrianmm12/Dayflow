@@ -120,6 +120,32 @@ final class MacActivityEngine {
   }
 }
 
+/// The engine façade's activity-change surface: re-exposes the storage
+/// layer's engine-owned timeline-activity signal so higher-level callers
+/// observe through the engine without knowing which storage component emits
+/// it. Top-level (not MainActor-isolated) so observation works from any
+/// execution context, headless included.
+enum MacActivityEngineSignals {
+  /// The activity-change signal: posted after a timeline-card persistence
+  /// mutation commits. Coarse re-read invalidation — no payload. The signal
+  /// is posted on the mutating thread; pass a `queue` when observing if a
+  /// specific delivery context is required.
+  static let activityChangedNotification = Notification.Name.timelineActivitiesChanged
+
+  /// Observes the engine's activity-change signal.
+  ///
+  /// The returned token follows NotificationCenter rules: deliver it to
+  /// `NotificationCenter.default.removeObserver(_:)` to stop observing.
+  @discardableResult
+  static func observeActivityChanges(
+    queue: OperationQueue? = nil,
+    using handler: @escaping (Notification) -> Void
+  ) -> NSObjectProtocol {
+    NotificationCenter.default.addObserver(
+      forName: activityChangedNotification, object: nil, queue: queue, using: handler)
+  }
+}
+
 /// Machine-readable snapshot of the analysis pipeline's processing state.
 /// Engine-owned and presentation-free: counts of persisted batch statuses
 /// plus the live in-flight tracker. Human progress strings and UI state are

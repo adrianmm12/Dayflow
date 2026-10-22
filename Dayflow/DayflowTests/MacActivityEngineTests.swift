@@ -119,4 +119,52 @@ final class MacActivityEngineTests: XCTestCase {
       status.pendingBatchCount + status.failedBatchCount + status.analyzedBatchCount,
       batches.count)
   }
+
+  // MARK: - Activity change signal
+
+  /// The façade's observer must receive the engine-owned signal (pins the
+  /// wiring: engine surface and storage emission share one notification).
+  func testObserveActivityChangesExposesEngineSignal() {
+    let signalReceived = expectation(description: "activity change signal")
+    let token = MacActivityEngineSignals.observeActivityChanges { _ in
+      signalReceived.fulfill()
+    }
+    addTeardownBlock { NotificationCenter.default.removeObserver(token) }
+
+    NotificationCenter.default.post(name: .timelineActivitiesChanged, object: nil)
+
+    wait(for: [signalReceived], timeout: 1.0)
+  }
+
+  /// A real storage timeline-card mutation path (title update) commits a
+  /// transaction and emits the signal. Probes with a card ID that cannot
+  /// exist, so no real timeline data is modified.
+  func testTimelineCardUpdateEmitsActivityChangeSignal() {
+    let signalReceived = expectation(description: "activity change signal")
+    let token = MacActivityEngineSignals.observeActivityChanges { _ in
+      signalReceived.fulfill()
+    }
+    addTeardownBlock { NotificationCenter.default.removeObserver(token) }
+
+    StorageManager.shared.updateTimelineCardTitle(cardId: -1, title: "signal probe")
+
+    wait(for: [signalReceived], timeout: 5.0)
+  }
+
+  /// The empty-batch-ID guard returns before any write transaction, so a
+  /// true no-op must not emit. (Committed transactions may still emit even
+  /// when they match zero rows — that coarse case is documented on the
+  /// signal.)
+  func testGuardedNoOpDeletionDoesNotEmitSignal() {
+    let unexpectedSignal = expectation(description: "no signal expected")
+    unexpectedSignal.isInverted = true
+    let token = MacActivityEngineSignals.observeActivityChanges { _ in
+      unexpectedSignal.fulfill()
+    }
+    addTeardownBlock { NotificationCenter.default.removeObserver(token) }
+
+    StorageManager.shared.deleteTimelineCards(forBatchIds: [])
+
+    wait(for: [unexpectedSignal], timeout: 0.3)
+  }
 }

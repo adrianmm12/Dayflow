@@ -30,7 +30,7 @@ extension StorageManager {
     let startTs = Int(dayStart.timeIntervalSince1970)
     let endTs = Int(dayEnd.timeIntervalSince1970)
 
-    try? timedWrite("deleteTimelineCards(forDay:\(day))") { db in
+    let committed: Void? = try? timedWrite("deleteTimelineCards(forDay:\(day))") { db in
       // First fetch all video paths before soft deletion
       let rows = try Row.fetchAll(
         db,
@@ -51,6 +51,9 @@ extension StorageManager {
               WHERE start_ts >= ? AND start_ts < ?
                 AND is_deleted = 0
           """, arguments: [startTs, endTs])
+    }
+    if committed != nil {
+      notifyTimelineActivitiesChanged()
     }
 
     return videoPaths
@@ -89,6 +92,7 @@ extension StorageManager {
           arguments: StatementArguments(batchIds)
         )
       }
+      notifyTimelineActivitiesChanged()
     } catch {
       print("deleteTimelineCards(forBatchIds:) failed: \(error)")
     }

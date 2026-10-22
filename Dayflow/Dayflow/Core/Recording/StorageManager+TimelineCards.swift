@@ -138,7 +138,7 @@ extension StorageManager {
 
     let endTs = Int(endDate.timeIntervalSince1970)
 
-    try? timedWrite("saveTimelineCardShell") {
+    let committed: Void? = try? timedWrite("saveTimelineCardShell") {
       db in
       // Encode metadata as an object for forward-compatibility
       let meta = TimelineMetadata(
@@ -169,11 +169,14 @@ extension StorageManager {
         ])
       lastId = db.lastInsertedRowID
     }
+    if committed != nil {
+      notifyTimelineActivitiesChanged()
+    }
     return lastId
   }
 
   func updateTimelineCardVideoURL(cardId: Int64, videoSummaryURL: String) {
-    try? timedWrite("updateTimelineCardVideoURL") {
+    let committed: Void? = try? timedWrite("updateTimelineCardVideoURL") {
       db in
       try db.execute(
         sql: """
@@ -182,12 +185,15 @@ extension StorageManager {
               WHERE id = ?
           """, arguments: [videoSummaryURL, cardId])
     }
+    if committed != nil {
+      notifyTimelineActivitiesChanged()
+    }
   }
 
   func deleteTimelineCard(recordId: Int64) -> String? {
     var videoPath: String? = nil
 
-    try? timedWrite("deleteTimelineCard(recordId:\(recordId))") { db in
+    let committed: Void? = try? timedWrite("deleteTimelineCard(recordId:\(recordId))") { db in
       guard
         let cardRow = try Row.fetchOne(
           db,
@@ -242,6 +248,9 @@ extension StorageManager {
         )
       }
     }
+    if committed != nil {
+      notifyTimelineActivitiesChanged()
+    }
 
     return videoPath
   }
@@ -274,6 +283,7 @@ extension StorageManager {
               WHERE id = ?
           """, arguments: [title, category, cardId])
     }
+    notifyTimelineActivitiesChanged()
   }
 
   // MARK: - Onboarding Card
@@ -317,7 +327,7 @@ extension StorageManager {
       String(data: $0, encoding: .utf8)
     }
 
-    try? timedWrite("createOnboardingCard") { db in
+    let committed: Void? = try? timedWrite("createOnboardingCard") { db in
       try db.execute(
         sql: """
               INSERT INTO timeline_cards(
@@ -340,6 +350,9 @@ extension StorageManager {
           "",  // detailed_summary - empty string (not NULL, as GRDB decode expects non-optional)
           metadataString,
         ])
+    }
+    if committed != nil {
+      notifyTimelineActivitiesChanged()
     }
   }
 
@@ -921,7 +934,7 @@ extension StorageManager {
 
     var cardId: Int64?
     var videoPaths: [String] = []
-    try? timedWrite("saveIdleBatchCard") { db in
+    let committed: Void? = try? timedWrite("saveIdleBatchCard") { db in
       videoPaths = try String.fetchAll(
         db,
         sql: """
@@ -956,6 +969,9 @@ extension StorageManager {
           ])
         cardId = db.lastInsertedRowID
       }
+    }
+    if committed != nil {
+      notifyTimelineActivitiesChanged()
     }
     return (cardId, videoPaths)
   }
@@ -992,7 +1008,7 @@ extension StorageManager {
     timeFormatter.dateFormat = "h:mm a"
     timeFormatter.locale = Locale(identifier: "en_US_POSIX")
 
-    try? timedWrite("replaceTimelineCardsInRange(\(newCards.count)_cards)") { db in
+    let committed: Void? = try? timedWrite("replaceTimelineCardsInRange(\(newCards.count)_cards)") { db in
       // First, fetch the video paths that will be soft-deleted
       // Note: We exclude error cards (category='System') from other batches to preserve them
       let videoRows = try Row.fetchAll(
@@ -1137,6 +1153,9 @@ extension StorageManager {
         let insertedId = db.lastInsertedRowID
         insertedIds.append(insertedId)
       }
+    }
+    if committed != nil {
+      notifyTimelineActivitiesChanged()
     }
 
     return (insertedIds, videoPaths)
