@@ -34,6 +34,7 @@ private final class RetryEligibilityStorageStub: StorageManaging {
     fatalError("unexpected call")
   }
   func checkpointPassive() { fatalError("unexpected call") }
+  func checkpointTruncate() { fatalError("unexpected call") }
   func markBatchFailed(batchId: Int64, reason: String) { fatalError("unexpected call") }
   func updateBatchLLMMetadata(batchId: Int64, calls: [LLMCall]) { fatalError("unexpected call") }
   func fetchBatchLLMMetadata(batchId: Int64) -> [LLMCall] { fatalError("unexpected call") }

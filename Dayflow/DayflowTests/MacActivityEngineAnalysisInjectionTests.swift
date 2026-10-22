@@ -237,4 +237,39 @@ final class MacActivityEngineAnalysisInjectionTests: XCTestCase {
     XCTAssertEqual(batches.count, 1)
     XCTAssertEqual(batches.first?.status, "failed_empty")
   }
+
+  // MARK: - Shutdown routing
+
+  /// `shutdown()` flushes the engine's injected storage — never the
+  /// production database (impossible by construction: the engine only holds
+  /// its injected dependency). Verified with the isolated concrete store:
+  /// after a write, the truncate checkpoint must reset the isolated
+  /// database's WAL to zero length.
+  ///
+  /// Note on the oracle: file sizes are read with the raw `stat` syscall
+  /// because `URL.resourceValues(forKeys:)` caches values per URL instance
+  /// and would report the stale pre-checkpoint size.
+  func testShutdownTruncateCheckpointsInjectedStorage() throws {
+    let storage = makeIsolatedStorage()
+    let engine = MacActivityEngine(storage: storage, analysis: FakeAnalysisManager())
+    let walPath = storage.dbURL.path + "-wal"
+
+    // Force write-ahead-log content in the isolated database.
+    try storage.db.write { db in
+      try db.execute(
+        sql: "INSERT INTO analysis_batches(batch_start_ts, batch_end_ts, status) VALUES (100, 200, 'pending')"
+      )
+    }
+    func walSize() -> Int {
+      var s = stat()
+      return stat(walPath, &s) == 0 ? Int(s.st_size) : -1
+    }
+    XCTAssertGreaterThanOrEqual(walSize(), 0, "expected the isolated WAL file to exist")
+
+    engine.shutdown()
+
+    // The truncate checkpoint merged the WAL into the isolated database and
+    // reset the WAL to zero length.
+    XCTAssertEqual(walSize(), 0)
+  }
 }

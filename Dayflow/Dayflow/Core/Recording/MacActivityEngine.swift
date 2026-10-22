@@ -21,17 +21,17 @@ final class MacActivityEngine {
   private var recorder: ScreenRecorder?
 
   /// Storage backing the engine's directly-owned façade operations: the
-  /// timeline-card range query in `activities(from:to:)` and the persisted
-  /// batch counts in `processingStatus()`. Production constructs the engine
-  /// with no arguments and gets the shared storage database; tests and future
-  /// engine hosts can inject an isolated `StorageManager`.
+  /// timeline-card range query in `activities(from:to:)`, the persisted
+  /// batch counts in `processingStatus()`, and the truncate checkpoint in
+  /// `shutdown()`. Production constructs the engine with no arguments and
+  /// gets the shared storage database; tests and future engine hosts inject an
+  /// isolated `StorageManager`.
   ///
   /// Analysis behavior (`startAnalysisJob()`, `reprocessDay(...)`, and the
   /// in-flight count in `processingStatus()`) is backed by the injected
   /// `analysis` dependency below; an engine composed with isolated storage
-  /// AND an isolated analysis manager is coherent across both. The one
-  /// remaining direct-storage exception is `shutdown()`, which still
-  /// checkpoints `StorageManager.shared` (a known, documented follow-up).
+  /// AND an isolated analysis manager is coherent across both. Every
+  /// non-capture façade operation honors the injected dependencies.
   private let storage: any StorageManaging
 
   /// Analysis backing the engine's analysis-facing façade operations:
@@ -90,17 +90,20 @@ final class MacActivityEngine {
   }
 
   /// Flushes engine storage state during application termination by
-  /// checkpointing (and truncating) the database WAL. The open capture
+  /// checkpointing (and truncating) the storage WAL. The open capture
   /// segment is finalized separately by the recorder's own will-terminate
   /// observer (FrameStore.finishCurrentSegment()).
   ///
-  /// Still checkpoints the shared production storage directly: the
-  /// `StorageManaging` protocol does not expose checkpointing, and widening
-  /// it just for this call would break the protocol's other conformers. An
-  /// engine constructed with isolated storage therefore still flushes the
-  /// production WAL here; revisit when shutdown is redesigned.
+  /// Checkpoints the engine's injected storage: production wiring resolves
+  /// to `StorageManager.shared`'s truncate checkpoint (identical behavior to
+  /// before), and an engine composed with isolated storage flushes only that
+  /// isolated database — the production database is never touched.
+  ///
+  /// Known and intentionally unresolved: the AppDelegate-driven checkpoint
+  /// can still run before the recorder's will-terminate observer finishes
+  /// the current segment (a separate lifecycle task).
   func shutdown() {
-    StorageManager.shared.checkpoint(mode: .truncate)
+    storage.checkpointTruncate()
   }
 
   // MARK: - Read-only timeline activity access

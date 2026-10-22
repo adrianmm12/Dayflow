@@ -128,4 +128,10 @@ protocol StorageManaging: Sendable {
   /// write-ahead log into the main database file). Storage-level abstraction
   /// so callers don't need GRDB's `Database.CheckpointMode`.
   func checkpointPassive()
+
+  /// Performs a truncate WAL checkpoint: merges the write-ahead log into the
+  /// main database file AND resets the WAL to zero length — the flush used
+  /// at application termination. Same GRDB-free abstraction as
+  /// `checkpointPassive()`; do not use for periodic maintenance.
+  func checkpointTruncate()
 }

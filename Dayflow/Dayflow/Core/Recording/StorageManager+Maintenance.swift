@@ -46,6 +46,12 @@ extension StorageManager {
     checkpoint(mode: .passive)
   }
 
+  /// `StorageManaging`-level truncate checkpoint (termination flush):
+  /// delegates to the exact existing `checkpoint(mode: .truncate)` behavior.
+  func checkpointTruncate() {
+    checkpoint(mode: .truncate)
+  }
+
   // MARK: - Safe Database Initialization
 
   /// Opens the database with automatic recovery from backup if corrupted.
