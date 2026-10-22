@@ -29,29 +29,31 @@ protocol AnalysisManaging {
 final class AnalysisManager: AnalysisManaging {
   static let shared = AnalysisManager()
 
-  /// Storage seam: production (`AnalysisManager.shared` and any no-argument
-  /// construction) resolves to `StorageManager.shared`; tests and future
-  /// engine hosts inject an isolated `StorageManager`. Every storage
-  /// operation the manager performs directly goes through this dependency,
-  /// including reprocessing's deletion/reset logic, batch-status updates,
-  /// retry-eligibility queries, and screenshot batching.
+  /// Dependency seams: production (`AnalysisManager.shared` and any
+  /// no-argument construction) resolves to `StorageManager.shared` and
+  /// `LLMService.shared`; tests and future engine hosts inject an isolated
+  /// `StorageManager` and/or any `LLMServicing`. Every storage operation the
+  /// manager performs directly goes through `store` (reprocessing's
+  /// deletion/reset logic, batch-status updates, retry-eligibility queries,
+  /// screenshot batching), and every LLM operation through `llmService`
+  /// (batch processing and the batching geometry via `batchingConfig`).
   ///
-  /// `llmService` remains `LLMService.shared` for every instance at this
-  /// stage: once a non-empty batch passes the manager's own
-  /// storage/scheduling logic (screenshots present, ≥5 min duration, not
-  /// idle), processing crosses into that global LLM boundary, which still
-  /// operates against `StorageManager.shared` internally. Storage injection
-  /// here therefore does NOT make a real (non-empty) LLM reprocess isolated —
-  /// see the boundary note on `queueLLMRequest`'s guard paths.
+  /// Note that the concrete `LLMService` still uses `StorageManager.shared`
+  /// internally: an injected manager is fully isolated only when BOTH
+  /// dependencies are injected. Injecting the LLM service alone does not
+  /// isolate the concrete service's own storage.
   ///
   /// Construction is otherwise side-effect-free: no timers, no periodic
   /// work, no analysis processing (scheduling only starts via the explicit
   /// `startAnalysisJob()`). The one pre-existing filesystem touch is
   /// `VideoProcessingService()`'s init, which ensures the real timelapses
   /// directory exists (an idempotent mkdir production already performs).
-  init(storage: any StorageManaging = StorageManager.shared) {
+  init(
+    storage: any StorageManaging = StorageManager.shared,
+    llmService: any LLMServicing = LLMService.shared
+  ) {
     store = storage
-    llmService = LLMService.shared
+    self.llmService = llmService
     videoProcessingService = VideoProcessingService()
   }
 
