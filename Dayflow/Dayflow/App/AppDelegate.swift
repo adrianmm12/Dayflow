@@ -42,7 +42,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   static var pendingNotificationNavigationDestination: PendingNotificationNavigationDestination? =
     nil
   private var statusBar: StatusBarController!
-  private var recorder: ScreenRecorder!
+  private var activityEngine: MacActivityEngine!
   private var analyticsSub: AnyCancellable?
   private var analyticsPreferenceObserver: NSObjectProtocol?
   private var powerObserver: NSObjectProtocol?
@@ -122,10 +122,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       LaunchAtLoginManager.shared.enableByDefaultIfNeeded(source: "existing_user")
     }
 
-    // Seed recording flag low, then create recorder so the first
-    // transition to true will reliably start capture.
-    AppState.shared.isRecording = false
-    recorder = ScreenRecorder(autoStart: true)
+    // Engine machinery: seeds the recording flag low and constructs the
+    // recorder. Must stay before the preference restore below — see
+    // MacActivityEngine.start().
+    activityEngine = MacActivityEngine()
+    activityEngine.start()
 
     // Only attempt to start recording if we're past the screen step or fully onboarded.
     if didOnboard || OnboardingStep.hasPassedScreenRecordingStep(rawValue: onboardingStep) {
@@ -176,7 +177,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     LLMService.eventSink = DayflowLLMServiceEvents()
 
     // Start the provider-routed analysis background job
-    setupTimelineAnalysis()
+    activityEngine.startAnalysisJob()
 
     // Start inactivity monitoring for idle reset
     InactivityMonitor.shared.start()
@@ -295,22 +296,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.setActivationPolicy(showDockIcon ? .regular : .accessory)
   }
 
-  // Start timeline analysis as a background task
-  private func setupTimelineAnalysis() {
-    // Perform after a short delay to ensure other initialization completes
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-      AnalysisManager.shared.startAnalysisJob()
-      print("AppDelegate: LLM analysis job started")
-      let providerID = (try? LLMProviderRoutingStore.load())?.primary
-      AnalyticsService.shared.capture(
-        "analysis_job_started",
-        [
-          "provider": providerID?.analyticsName ?? "unknown",
-          "provider_id": providerID?.rawValue ?? "unknown",
-        ])
-    }
-  }
-
   func application(_ application: NSApplication, open urls: [URL]) {
     if deepLinkRouter == nil {
       pendingDeepLinkURLs.append(contentsOf: urls)
@@ -323,9 +308,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    // Checkpoint WAL to persist any pending database changes before quit
-    // Using .truncate to also reset the WAL file for a clean state
-    StorageManager.shared.checkpoint(mode: .truncate)
+    // Flush engine storage (checkpoint + truncate the WAL) before quit
+    activityEngine?.shutdown()
 
     heartbeatTimer?.invalidate()
     heartbeatTimer = nil
