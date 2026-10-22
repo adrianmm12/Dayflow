@@ -60,8 +60,8 @@ enum LLMProviderRoutingStore {
     -> LegacyLLMProviderMigration.Result
   {
     let migration = LegacyLLMProviderMigration.migrate(from: defaults)
-    if !CodexPromptPreferences.hasStoredOverrides(in: defaults) {
-      try CodexPromptPreferences.saveVerified(
+    if !TimelinePromptPreferences.hasStoredOverrides(in: defaults) {
+      try TimelinePromptPreferences.saveVerified(
         migration.sharedPromptOverrides,
         to: defaults
       )
