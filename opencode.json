@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "general": {
+      "model": "fireworks/accounts/fireworks/models/glm-5p3-flash"
+    },
+    "explore": {
+      "model": "fireworks/accounts/fireworks/models/glm-5p3-flash"
+    },
+    "scout": {
+      "model": "fireworks/accounts/fireworks/models/glm-5p3-flash"
+    }
+  }
+}
