@@ -93,10 +93,10 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     super.init()
     dbg("init – autoStart = \(autoStart)")
 
-    wantsRecording = AppState.shared.isRecording
+    wantsRecording = RecordingState.shared.isRecording
 
     // Observe the app-wide recording flag
-    sub = AppState.shared.$isRecording
+    sub = RecordingState.shared.$isRecording
       .dropFirst()
       .removeDuplicates()
       .sink { [weak self] rec in
@@ -123,7 +123,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       }
 
     // Honor the current flag once (after subscriptions exist)
-    if autoStart, AppState.shared.isRecording { start() }
+    if autoStart, RecordingState.shared.isRecording { start() }
 
     ScreenCaptureMonitor.shared.startObserving()
     registerForSleepAndLock()
@@ -756,8 +756,8 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     }
 
     Task { @MainActor in
-      if AppState.shared.isRecording {
-        AppState.shared.setRecording(
+      if RecordingState.shared.isRecording {
+        RecordingState.shared.setRecording(
           false,
           analyticsReason: "permission_missing",
           persistPreference: false
@@ -843,7 +843,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.q.async { [weak self] in
         guard let self else { return }
         Task { @MainActor in
-          if AppState.shared.isRecording {
+          if RecordingState.shared.isRecording {
             self.q.async { [weak self] in
               self?.transition(to: .paused, context: "system sleep")
             }
@@ -884,7 +884,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.q.async { [weak self] in
         guard let self else { return }
         Task { @MainActor in
-          if AppState.shared.isRecording {
+          if RecordingState.shared.isRecording {
             self.q.async { [weak self] in
               self?.transition(to: .paused, context: "screen locked")
             }
@@ -925,7 +925,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.q.async { [weak self] in
         guard let self else { return }
         Task { @MainActor in
-          if AppState.shared.isRecording {
+          if RecordingState.shared.isRecording {
             self.q.async { [weak self] in
               self?.transition(to: .paused, context: "screensaver started")
             }
@@ -969,7 +969,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
         return
       }
       Task { @MainActor in
-        guard AppState.shared.isRecording else {
+        guard RecordingState.shared.isRecording else {
           dbg("\(context) – skip auto-resume (recording disabled)")
           return
         }

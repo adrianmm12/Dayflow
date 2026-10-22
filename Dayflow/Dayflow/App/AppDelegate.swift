@@ -167,7 +167,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     } else {
       // Still in early onboarding, don't enable persistence yet
       // Keep recording off and don't persist this state
-      AppState.shared.isRecording = false
+      RecordingState.shared.isRecording = false
       flushPendingDeepLinks()
     }
 

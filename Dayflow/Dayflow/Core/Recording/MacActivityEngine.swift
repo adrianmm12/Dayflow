@@ -7,11 +7,9 @@
 //  ScreenRecorder, starting the analysis background job, and flushing storage
 //  state on termination.
 //
-//  Recording on/off control is unchanged: the recorder still observes
-//  AppState.shared.isRecording directly, and the host app still drives that
-//  flag. The recorder itself owns capture timers, sleep/wake/lock/screensaver
-//  handling, ScreenCaptureKit failure retries, and finalizing the open
-//  capture segment on app termination; none of that is duplicated here.
+//  Recording on/off control flows through the engine-owned RecordingState,
+//  which the recorder observes directly. The host app (or this façade's
+//  capture-control methods) drives that state.
 //
 
 import Foundation
@@ -19,19 +17,19 @@ import Foundation
 @MainActor
 final class MacActivityEngine {
   /// Retained for the engine's lifetime so the recorder keeps observing
-  /// system events and AppState until shutdown.
+  /// system events and RecordingState until shutdown.
   private var recorder: ScreenRecorder?
 
   /// Seeds the recording flag low, then constructs the recorder so the first
   /// transition to true will reliably start capture.
   ///
-  /// Must run before the host enables AppState persistence or restores the
-  /// saved recording preference: seeding after persistence is enabled would
+  /// Must run before the host enables RecordingState persistence or restores
+  /// the saved recording preference: seeding after persistence is enabled would
   /// overwrite the saved preference with `false`. Constructing the recorder
   /// also runs FrameStore's launch reconciliation, which is the engine's first
   /// touch of the shared storage database.
   func start() {
-    AppState.shared.isRecording = false
+    RecordingState.shared.isRecording = false
     recorder = ScreenRecorder(autoStart: true)
   }
 
@@ -121,10 +119,10 @@ final class MacActivityEngine {
 
   // MARK: - Capture control
 
-  /// Requests screen capture to start. Delegates to the app's canonical
-  /// recording-state mutation (AppState.setRecording), which the screen
-  /// recorder observes through its existing subscription. Like the manual
-  /// recording toggle, the preference persists and is restored on launch.
+  /// Requests screen capture to start. Delegates to the engine-owned
+  /// recording state (RecordingState.setRecording), which the screen recorder
+  /// observes through its existing subscription. Like the manual recording
+  /// toggle, the preference persists and is restored on launch.
   ///
   /// Permission UX is host-owned, not part of this call: if the
   /// screen-recording permission is missing, the recorder's existing
@@ -132,22 +130,22 @@ final class MacActivityEngine {
   /// correction), and posts the screen-recording permission notice for the
   /// host to surface.
   func startCapture() {
-    AppState.shared.setRecording(true, analyticsReason: "engine")
+    RecordingState.shared.setRecording(true, analyticsReason: "engine")
   }
 
-  /// Requests screen capture to stop. Delegates to the canonical
-  /// recording-state mutation; the preference persists, matching the manual
-  /// toggle's semantics.
+  /// Requests screen capture to stop. Delegates to the engine-owned
+  /// recording state; the preference persists, matching the manual toggle's
+  /// semantics.
   func stopCapture() {
-    AppState.shared.setRecording(false, analyticsReason: "engine")
+    RecordingState.shared.setRecording(false, analyticsReason: "engine")
   }
 
   /// Whether the recording-control flag is currently enabled: a read-only
-  /// mirror of the state the recorder observes. This is not an
-  /// instantaneous capture sensor — the recorder pauses during sleep/lock
-  /// while this flag stays true.
+  /// mirror of the engine-owned recording state the recorder observes. This
+  /// is not an instantaneous capture sensor — the recorder pauses during
+  /// sleep/lock while this flag stays true.
   var isCaptureEnabled: Bool {
-    AppState.shared.isRecording
+    RecordingState.shared.isRecording
   }
 }
 
