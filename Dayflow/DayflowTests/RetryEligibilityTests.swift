@@ -233,20 +233,4 @@ final class RetryEligibilityTests: XCTestCase {
       RetryEligibility.isRetryableFailedCard(
         makeCard(title: "Wrote documentation", batchId: 42), storageManager: storage))
   }
-
-  func testTimelineActivityLoaderDelegatesToEngineRule() {
-    let storage = RetryEligibilityStorageStub(screenshotsByBatch: [
-      42: [makeScreenshot(id: 1, filePath: existingFramePath)]
-    ])
-    let retryableCard = makeCard(title: "Processing failed", batchId: 42)
-    let notRetryableCard = makeCard(title: "Processing failed", batchId: 7)
-
-    // The UI entry point must keep matching the engine-owned implementation.
-    XCTAssertEqual(
-      TimelineActivityLoader.isRetryableFailedCard(retryableCard, storageManager: storage),
-      RetryEligibility.isRetryableFailedCard(retryableCard, storageManager: storage))
-    XCTAssertEqual(
-      TimelineActivityLoader.isRetryableFailedCard(notRetryableCard, storageManager: storage),
-      RetryEligibility.isRetryableFailedCard(notRetryableCard, storageManager: storage))
-  }
 }

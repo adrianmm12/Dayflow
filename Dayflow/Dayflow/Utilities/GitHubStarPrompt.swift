@@ -154,3 +154,72 @@ enum GitHubStarPrompt {
     repo.split(separator: "/").last.map(String.init) ?? repo
   }
 }
+
+// MARK: - GitHub star prompt state
+//
+// Moved verbatim from the presentation layer (Views/UI/GitHubStarPromptCard.swift).
+// Core/Surveys/SurveyCenter reads `lastShownAt` so surveys stay off the same
+// day as the star card; the state itself is just UserDefaults bookkeeping.
+
+enum GitHubStarPromptState {
+  static let repositoryURL = URL(string: "https://github.com/jerryzliu/Dayflow")!
+
+  /// How long to wait between asks (and between gh checks for people we can't ask).
+  static let reminderInterval: TimeInterval = 3 * 24 * 60 * 60
+
+  /// Set once the person clicks any star button or gh reports Dayflow as starred.
+  /// After that we never ask again, even if the browser star can't be verified.
+  private static let isDoneKey = "gitHubStarPromptDone"
+  private static let lastAttemptAtKey = "gitHubStarPromptLastAttemptAt"
+  private static let lastShownAtKey = "gitHubStarPromptLastShownAt"
+  private static let shownCountKey = "gitHubStarPromptShownCount"
+  /// The one-time prompt for people without gh. Reuses the original first-card key so
+  /// anyone who already saw the old prompt isn't asked again.
+  private static let hasShownBrowserPromptKey = "hasShownGitHubStarPrompt"
+
+  static var isDone: Bool {
+    UserDefaults.standard.bool(forKey: isDoneKey)
+  }
+
+  static var hasShownBrowserPrompt: Bool {
+    UserDefaults.standard.bool(forKey: hasShownBrowserPromptKey)
+  }
+
+  /// When either version of the card last appeared. Surveys use it to stay off the same day.
+  static var lastShownAt: Date? {
+    UserDefaults.standard.object(forKey: lastShownAtKey) as? Date
+  }
+
+  static var shownCount: Int {
+    UserDefaults.standard.integer(forKey: shownCountKey)
+  }
+
+  /// True when it's been at least `reminderInterval` since the last gh check.
+  static var isDue: Bool {
+    guard !isDone else { return false }
+    guard let lastAttemptAt = UserDefaults.standard.object(forKey: lastAttemptAtKey) as? Date else {
+      return true
+    }
+    return Date().timeIntervalSince(lastAttemptAt) >= reminderInterval
+  }
+
+  static func markDone() {
+    UserDefaults.standard.set(true, forKey: isDoneKey)
+  }
+
+  /// Starts the 3-day wait, whether or not the check ended in showing the prompt.
+  static func markAttempted() {
+    UserDefaults.standard.set(Date(), forKey: lastAttemptAtKey)
+  }
+
+  static func markShown() {
+    markAttempted()
+    UserDefaults.standard.set(shownCount + 1, forKey: shownCountKey)
+    UserDefaults.standard.set(Date(), forKey: lastShownAtKey)
+  }
+
+  static func markBrowserPromptShown() {
+    UserDefaults.standard.set(true, forKey: hasShownBrowserPromptKey)
+    UserDefaults.standard.set(Date(), forKey: lastShownAtKey)
+  }
+}

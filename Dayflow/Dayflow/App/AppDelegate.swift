@@ -112,8 +112,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     LaunchAtLoginManager.shared.bootstrapDefaultPreference()
     deepLinkRouter = AppDeepLinkRouter()
 
-    // Check if we've passed the screen recording permission step
-    let onboardingStep = OnboardingStepMigration.migrateIfNeeded()
     let didOnboard = UserDefaults.standard.bool(forKey: "didOnboard")
 
     // People who onboarded before launch at login became the default get it turned on once.
@@ -128,47 +126,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     activityEngine = MacActivityEngine()
     activityEngine.start()
 
-    // Only attempt to start recording if we're past the screen step or fully onboarded.
-    if didOnboard || OnboardingStep.hasPassedScreenRecordingStep(rawValue: onboardingStep) {
-      // Onboarding complete - enable persistence and restore user preference
-      AppState.shared.enablePersistence()
+    // The onboarding flow was removed with the presentation layer, so there is
+    // no screen-recording step to gate on anymore: always enable persistence
+    // and try to start recording. Permission failures are still handled
+    // gracefully inside the task below.
+    // Onboarding complete - enable persistence and restore user preference
+    AppState.shared.enablePersistence()
 
-      // Try to start recording, but handle permission failures gracefully
-      Task { [weak self] in
-        guard let self else { return }
-        guard ScreenRecordingPermissionNotice.isGranted else {
-          await MainActor.run {
-            AppState.shared.setRecording(
-              false,
-              analyticsReason: "auto",
-              persistPreference: false
-            )
-          }
-          if didOnboard {
-            ScreenRecordingPermissionNotice.post(reason: "launch_preflight_missing")
-          }
-          self.flushPendingDeepLinks()
-          return
-        }
-
-        // Permission granted - restore saved preference or default to ON.
-        // No extra SCShareableContent probe here: every ScreenCaptureKit call makes
-        // macOS re-check the grant (issue #381), and the recorder's own start
-        // retries with backoff if capture really can't begin.
+    // Try to start recording, but handle permission failures gracefully
+    Task { [weak self] in
+      guard let self else { return }
+      guard ScreenRecordingPermissionNotice.isGranted else {
         await MainActor.run {
-          let savedPref = AppState.shared.getSavedPreference()
-          AppState.shared.setRecording(savedPref ?? true, analyticsReason: "auto")
+          AppState.shared.setRecording(
+            false,
+            analyticsReason: "auto",
+            persistPreference: false
+          )
         }
-        let finalState = await MainActor.run { AppState.shared.isRecording }
-        AnalyticsService.shared.capture(
-          "recording_toggled", ["enabled": finalState, "reason": "auto"])
+        if didOnboard {
+          ScreenRecordingPermissionNotice.post(reason: "launch_preflight_missing")
+        }
         self.flushPendingDeepLinks()
+        return
       }
-    } else {
-      // Still in early onboarding, don't enable persistence yet
-      // Keep recording off and don't persist this state
-      RecordingState.shared.isRecording = false
-      flushPendingDeepLinks()
+
+      // Permission granted - restore saved preference or default to ON.
+      // No extra SCShareableContent probe here: every ScreenCaptureKit call makes
+      // macOS re-check the grant (issue #381), and the recorder's own start
+      // retries with backoff if capture really can't begin.
+      await MainActor.run {
+        let savedPref = AppState.shared.getSavedPreference()
+        AppState.shared.setRecording(savedPref ?? true, analyticsReason: "auto")
+      }
+      let finalState = await MainActor.run { AppState.shared.isRecording }
+      AnalyticsService.shared.capture(
+        "recording_toggled", ["enabled": finalState, "reason": "auto"])
+      self.flushPendingDeepLinks()
     }
 
     // Route engine analysis lifecycle events (failure toast, getting-started
@@ -185,8 +179,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Start Daily and Weekly notifications and retire legacy Journal reminders
     NotificationService.shared.start()
     DayflowAuthManager.shared.loadStoredSessionIfNeeded()
-    SupportChatSession.shared.start()
-    SupportChatSession.startFlowWaitlistMonitoring()
 
     // Start daily recap generation scheduler (checks every 5 minutes)
     DailyRecapScheduler.shared.start()
@@ -329,9 +321,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // If onboarding not completed, mark abandoned with last step
     let didOnboard = UserDefaults.standard.bool(forKey: "didOnboard")
     if !didOnboard {
-      let stepIdx = OnboardingStepMigration.migrateIfNeeded()
-      let stepName = OnboardingStep(rawValue: stepIdx)?.analyticsName ?? "unknown"
-      AnalyticsService.shared.capture("onboarding_abandoned", ["last_step": stepName])
+      // The onboarding step tracker went away with the presentation layer.
+      AnalyticsService.shared.capture("onboarding_abandoned", ["last_step": "unknown"])
     }
     var terminatedProps: [String: Any] = ["reason": Self.terminationReason]
     if let launch = appLaunchDate {

@@ -1,85 +1,14 @@
-import SwiftUI
+//
+//  WeeklySuggestionsSection.swift
+//  Dayflow
+//
+//  Data models for the weekly suggestions section. The section's SwiftUI view
+//  was removed with the presentation-layer stripping slice; the models stay
+//  because Core/Weekly dashboard builders construct them. They will move (or
+//  go away with Core/Weekly) in a later stripping slice.
+//
 
-struct WeeklySuggestionsSection: View {
-  let snapshot: WeeklySuggestionsSnapshot
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 24) {
-      Text(snapshot.title)
-        .font(.custom("InstrumentSerif-Regular", size: 24))
-        .foregroundStyle(WeeklyPalette.title)
-
-      ViewThatFits(in: .horizontal) {
-        HStack(alignment: .top, spacing: 32) {
-          suggestionColumn(
-            title: snapshot.topLevelUpdatesTitle,
-            items: snapshot.topLevelUpdates
-          )
-
-          suggestionColumn(
-            title: snapshot.nextStepsTitle,
-            items: snapshot.nextSteps
-          )
-        }
-
-        VStack(alignment: .leading, spacing: 24) {
-          suggestionColumn(
-            title: snapshot.topLevelUpdatesTitle,
-            items: snapshot.topLevelUpdates
-          )
-
-          suggestionColumn(
-            title: snapshot.nextStepsTitle,
-            items: snapshot.nextSteps
-          )
-        }
-      }
-    }
-    .padding(.horizontal, 36)
-    .padding(.vertical, 28)
-    .frame(maxWidth: .infinity, alignment: .topLeading)
-    .background(WeeklyPalette.cardFillStrong)
-    .overlay(
-      RoundedRectangle(cornerRadius: 4, style: .continuous)
-        .stroke(WeeklyPalette.cardBorder, lineWidth: 1)
-    )
-    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-  }
-
-  private func suggestionColumn(title: String, items: [WeeklySuggestionEntry]) -> some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text(title)
-        .font(.custom("Figtree-Bold", size: 14))
-        .foregroundStyle(WeeklyPalette.title)
-
-      VStack(alignment: .leading, spacing: 12) {
-        ForEach(items) { item in
-          suggestionRow(for: item)
-        }
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .topLeading)
-  }
-
-  private func suggestionRow(for item: WeeklySuggestionEntry) -> some View {
-    HStack(alignment: .top, spacing: 10) {
-      Rectangle()
-        .fill(Color(hex: "FF8F64"))
-        .frame(width: 2)
-        .frame(maxHeight: .infinity)
-        .padding(.vertical, 2)
-
-      (Text(item.label)
-        .font(.custom("Figtree-Bold", size: 12))
-        + Text(" - \(item.detail)")
-        .font(.custom("Figtree-Regular", size: 12)))
-        .foregroundStyle(WeeklyPalette.text)
-        .lineSpacing(2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-  }
-}
+import Foundation
 
 struct WeeklySuggestionsSnapshot {
   let title: String
@@ -166,10 +95,4 @@ struct WeeklySuggestionEntry: Identifiable {
   let id: String
   let label: String
   let detail: String
-}
-
-#Preview("1:1 Suggestions", traits: .fixedLayout(width: 958, height: 328)) {
-  WeeklySuggestionsSection(snapshot: .figmaPreview)
-    .padding(24)
-    .background(WeeklyPalette.canvas)
 }

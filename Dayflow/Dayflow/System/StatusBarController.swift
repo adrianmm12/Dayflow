@@ -8,12 +8,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
   private let menu = NSMenu()
   private var cancellable: AnyCancellable?
   private var flowCancellable: AnyCancellable?
-  private var flowTimer: Timer?
-  /// What the Flow pill last drew, so the once-a-second tick only re-renders
-  /// when the label actually changes.
-  private var flowPillLabel: String??
-  /// The same countdown, for the hero at the top of the open menu.
-  private let flowClock = FlowMenuClock()
 
   override init() {
     super.init()
@@ -35,7 +29,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self?.updateIcon(isRecording: isRecording)
       }
 
-    // While a Flow session is on, the icon gives way to the Flow pill.
+    // Keep the icon in sync when a Flow session ends.
     flowCancellable = FlowSessionMirror.shared.$snapshot
       .removeDuplicates()
       .receive(on: RunLoop.main)
@@ -49,87 +43,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     statusItem.button?.image = menuBarIcon(isRecording: isRecording)
   }
 
-  // MARK: - Flow session pill
+  // MARK: - Flow session
+
+  // The Flow countdown pill (FlowMenuBarPill) and the session hero at the top
+  // of the open menu (FlowMenuSessionHero) were removed with the Menu layer;
+  // the plain recording icon stays up while a session is on.
 
   private func flowSessionChanged() {
-    if FlowSessionMirror.shared.isSessionOn {
-      statusItem.length = NSStatusItem.variableLength
-      if flowTimer == nil {
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-          MainActor.assumeIsolated { self?.renderFlowPill() }
-        }
-        // .common so the countdown keeps moving while a menu is open.
-        RunLoop.main.add(timer, forMode: .common)
-        flowTimer = timer
-      }
-      renderFlowPill()
-    } else {
-      flowTimer?.invalidate()
-      flowTimer = nil
-      flowPillLabel = nil
+    if !FlowSessionMirror.shared.isSessionOn {
       statusItem.length = NSStatusItem.squareLength
       statusItem.button?.image = menuBarIcon(isRecording: AppState.shared.isRecording)
     }
-  }
-
-  private func renderFlowPill() {
-    let label = flowTimeLabel()
-    guard flowPillLabel != .some(label) else { return }
-    let renderer = ImageRenderer(content: FlowMenuBarPill(time: label))
-    renderer.scale = statusItem.button?.window?.backingScaleFactor ?? 2
-    guard let image = renderer.nsImage else { return }
-    flowPillLabel = .some(label)
-    statusItem.button?.image = image
-    flowClock.label = label
-  }
-
-  /// Time left in the session or the break; an always-on session counts up.
-  private func flowTimeLabel() -> String? {
-    let snapshot = FlowSessionMirror.shared.snapshot
-    let now = Int(Date().timeIntervalSince1970)
-    let seconds: Int
-    if snapshot.phase == .onBreak, let endsAt = snapshot.breakEndsAt {
-      seconds = endsAt - now
-    } else if let endsAt = snapshot.sessionEndsAt {
-      seconds = endsAt - now
-    } else if let startedAt = snapshot.sessionStartedAt {
-      seconds = now - startedAt
-    } else {
-      return nil
-    }
-    let clamped = max(0, seconds)
-    if clamped >= 3600 {
-      return String(format: "%d:%02d:%02d", clamped / 3600, clamped % 3600 / 60, clamped % 60)
-    }
-    return String(format: "%d:%02d", clamped / 60, clamped % 60)
-  }
-
-  private func flowSessionHeroItem() -> NSMenuItem {
-    let mirror = FlowSessionMirror.shared
-    let mode: FlowMenuSessionHero.Mode
-    if RecordingControl.currentMode() != .active {
-      mode = .dayflowPaused
-    } else if mirror.snapshot.phase == .onBreak {
-      mode = .onBreak
-    } else {
-      mode = .inProgress
-    }
-
-    flowClock.label = flowTimeLabel()
-    let hero = FlowMenuSessionHero(mode: mode, clock: flowClock) { [weak self] control in
-      self?.menu.cancelTracking()
-      switch control {
-      case .startBreak(let minutes): mirror.menuBarControl("break", minutes: minutes)
-      case .resume: mirror.menuBarControl("resume")
-      case .end: mirror.menuBarControl("end")
-      }
-    }
-    let host = NSHostingView(rootView: hero)
-    host.frame = NSRect(origin: .zero, size: FlowMenuSessionHero.size(for: mode))
-
-    let item = NSMenuItem()
-    item.view = host
-    return item
   }
 
   private func menuBarIcon(isRecording: Bool) -> NSImage? {
@@ -145,14 +69,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
   func menuNeedsUpdate(_ menu: NSMenu) {
     menu.removeAllItems()
 
-    if FlowSessionMirror.shared.isSessionOn {
-      menu.addItem(flowSessionHeroItem())
-    }
-
     switch RecordingControl.currentMode() {
     case .active:
-      menu.addItem(.sectionHeader(title: String(localized: "Pause Dayflow")))
-      menu.addItem(pauseStripItem())
+      break
     case .pausedTimed(let endTime):
       let time = endTime.formatted(date: .omitted, time: .shortened)
       menu.addItem(infoItem(String(localized: "Paused until \(time)")))
@@ -198,22 +117,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     #if compiler(>=6.4)
       if #available(macOS 27.0, *) { item.preferredImageVisibility = .visible }
     #endif
-    return item
-  }
-
-  /// The horizontal row of pause lengths. Custom views don't close the menu on
-  /// click the way normal items do, so the handler closes it first.
-  private func pauseStripItem() -> NSMenuItem {
-    let strip = StatusMenuPauseStrip(durations: PausePresets.durations) { [weak self] duration in
-      self?.menu.cancelTracking()
-      PauseManager.shared.pause(for: duration, source: .menuBar)
-    }
-    let host = NSHostingView(rootView: strip)
-    host.frame = NSRect(x: 0, y: 0, width: 220, height: StatusMenuPauseStrip.height)
-    host.autoresizingMask = [.width]
-
-    let item = NSMenuItem()
-    item.view = host
     return item
   }
 

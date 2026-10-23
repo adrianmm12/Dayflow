@@ -58,13 +58,6 @@ final class LocalizationTests: XCTestCase {
         "Respond in English") == true)
   }
 
-  func testStorageNumbersDoNotParseTranslatedUnitLabels() {
-    XCTAssertEqual(
-      StorageLimitOption(id: 0, label: "1 ГБ", bytes: 1_000_000_000).shortLabel, 1.formatted())
-    XCTAssertEqual(
-      StorageLimitOption(id: 1, label: "2 Go", bytes: 2_000_000_000).shortLabel, 2.formatted())
-  }
-
   func testInternalLabelsRemainStableAcrossInterfaceLanguages() {
     XCTAssertEqual(LLMProviderID.local.providerLabel, "local")
     XCTAssertEqual(DashboardChatProvider.gemini.runtimeLabel, "gemini_function_calling")

@@ -737,6 +737,9 @@ extension ChatService {
     let geminiKey =
       KeychainManager.shared.retrieve(for: "gemini")?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    return !geminiKey.isEmpty || CLIDetector.isInstalled(.codex) || CLIDetector.isInstalled(.claude)
+    // Onboarding's CLIDetector UI went away with the presentation layer; the
+    // underlying login-shell probe it delegated to is used directly instead.
+    return !geminiKey.isEmpty || LoginShellRunner.isInstalled("codex")
+      || LoginShellRunner.isInstalled("claude")
   }
 }

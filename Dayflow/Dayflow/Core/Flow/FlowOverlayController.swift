@@ -61,39 +61,10 @@ final class FlowOverlayController {
 
   private func hidePanel() {
     guard let panel, panel.isVisible else { return }
-
-    // Let the creature leave in character before the panel fades.
-    let exit = exitClip(for: lastPresentation)
     lastPresentation = .hidden
-    guard let exit else {
-      fadeOut(panel)
-      return
-    }
-    FlowCreaturePlayer.shared.playOnce(exit) { [weak self] in
-      // The overlay may have come back mid-exit (a new nudge); leave it up.
-      guard FlowSessionMirror.shared.overlay == .hidden else { return }
-      self?.panel.map { self?.fadeOut($0) }
-    }
-  }
-
-  private func exitClip(for presentation: FlowOverlayPresentation) -> FlowCreatureClip? {
-    let mirror = FlowSessionMirror.shared
-    switch presentation {
-    case .hidden: return nil
-    case .onBreak: return .bathEnd
-    case .nudge(_, true), .demo(_, _, true): return .fireEnd
-    case .sessionEnded, .toast, .nudge, .demo:
-      switch mirror.overlayVariant {
-      case .side:
-        return presentation == .sessionEnded ? .exitPlane : .randomExit
-      case .top:
-        // Landed creature: flies off by copter when the user gets back to
-        // work, folds a paper plane for everything else.
-        return mirror.lastNudgeReply == .backToWork ? .exitCopter : .exitPlane
-      case .peek:
-        return .peekExit
-      }
-    }
+    // The creature exit-clip animation went away with the presentation layer;
+    // the panel now simply fades.
+    fadeOut(panel)
   }
 
   private func fadeOut(_ panel: NSPanel) {
@@ -121,14 +92,14 @@ final class FlowOverlayController {
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     panel.isMovableByWindowBackground = false
     panel.hidesOnDeactivate = false
+    // The FlowOverlayView content went away with the presentation layer. The
+    // panel is now an empty clear container, so make sure it can never eat
+    // clicks meant for the apps underneath.
+    panel.ignoresMouseEvents = true
 
-    let hostingView = NSHostingView(rootView: FlowOverlayView())
-    hostingView.frame = panel.contentRect(forFrameRect: panel.frame)
-    hostingView.autoresizingMask = [.width, .height]
-    // Never let SwiftUI's ideal size drive the window frame — without this the
-    // panel collapses to the text's intrinsic width (a tall sliver).
-    hostingView.sizingOptions = []
-    panel.contentView = hostingView
+    let contentView = NSView(frame: panel.contentRect(forFrameRect: panel.frame))
+    contentView.autoresizingMask = [.width, .height]
+    panel.contentView = contentView
     return panel
   }
 

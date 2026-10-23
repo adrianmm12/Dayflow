@@ -20,8 +20,7 @@ final class DayflowLLMServiceEvents: LLMServiceEvents {
   }
 
   func batchAnalyzed(cardCount: Int) {
-    Task { @MainActor in
-      GettingStarted.handleBatchAnalyzed(cardCount: cardCount)
-    }
+    // The getting-started milestone tracker was removed with the presentation
+    // layer; nothing else subscribes to first-cards milestones yet.
   }
 }
