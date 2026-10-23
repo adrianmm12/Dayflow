@@ -26,6 +26,12 @@ final class FrameStore: @unchecked Sendable {
   /// faster random access for thumbnails at a modest file-size cost.
   static let keyframeInterval = 30
 
+  /// Storage owning this store's segment files and screenshot rows. Production
+  /// (`FrameStore.shared`) uses `StorageManager.shared`, so segments land in the
+  /// real recordings directory and rows in the real database. Isolated instances
+  /// point at an isolated `StorageManager` and never touch production state.
+  private let storage: StorageManaging
+
   private let writeQueue = DispatchQueue(label: "com.dayflow.framestore.write", qos: .userInitiated)
   private var writer: SegmentWriter?
 
@@ -34,7 +40,12 @@ final class FrameStore: @unchecked Sendable {
   private var readerOrder: [String] = []
   private let readerCacheLimit = 4
 
-  private init() {}
+  /// Construction performs no work: no screen capture, no reconciliation, no
+  /// filesystem or database access, no recurring tasks. Lifecycle (e.g.
+  /// `reconcileAfterLaunch`) is driven by callers exactly as before.
+  init(storage: StorageManaging = StorageManager.shared) {
+    self.storage = storage
+  }
 
   // MARK: - Writing
 
@@ -52,7 +63,7 @@ final class FrameStore: @unchecked Sendable {
       }
 
       if writer == nil {
-        let url = StorageManager.shared.nextSegmentURL()
+        let url = storage.nextSegmentURL()
         guard let created = SegmentWriter(url: url, width: image.width, height: image.height)
         else {
           print("❌ FrameStore: could not start segment at \(url.lastPathComponent)")
@@ -71,7 +82,7 @@ final class FrameStore: @unchecked Sendable {
         return nil
       }
 
-      return StorageManager.shared.saveScreenshot(
+      return storage.saveScreenshot(
         segmentPath: current.url.path,
         frameIndex: frameIndex,
         capturedAt: capturedAt,
@@ -96,35 +107,35 @@ final class FrameStore: @unchecked Sendable {
     if succeeded {
       let attributes = try? FileManager.default.attributesOfItem(atPath: path)
       let bytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-      StorageManager.shared.updateScreenshotFileSizes(segmentPath: path, totalBytes: bytes)
+      storage.updateScreenshotFileSizes(segmentPath: path, totalBytes: bytes)
     } else {
       print("❌ FrameStore: segment failed to finalize, dropping \(current.url.lastPathComponent)")
       try? FileManager.default.removeItem(at: current.url)
-      StorageManager.shared.markScreenshotsDeleted(segmentPath: path)
+      storage.markScreenshotsDeleted(segmentPath: path)
     }
   }
 
   /// Drops the most recent segment if a crash left it unreadable. Call once at launch.
   func reconcileAfterLaunch() {
-    writeQueue.async {
-      guard let path = StorageManager.shared.mostRecentSegmentPath() else { return }
+    writeQueue.async { [self] in
+      guard let path = storage.mostRecentSegmentPath() else { return }
       let url = URL(fileURLWithPath: path)
       guard FileManager.default.fileExists(atPath: path) else {
-        StorageManager.shared.markScreenshotsDeleted(segmentPath: path)
+        storage.markScreenshotsDeleted(segmentPath: path)
         return
       }
       guard SegmentReader(url: url) != nil else {
         print(
           "⚠️ FrameStore: unreadable segment from previous run, dropping \(url.lastPathComponent)")
         try? FileManager.default.removeItem(at: url)
-        StorageManager.shared.markScreenshotsDeleted(segmentPath: path)
+        storage.markScreenshotsDeleted(segmentPath: path)
         return
       }
       // Readable, but a crash between finishWriting and the size update leaves NULL sizes.
       let attributes = try? FileManager.default.attributesOfItem(atPath: path)
       let bytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
       if bytes > 0 {
-        StorageManager.shared.updateScreenshotFileSizes(segmentPath: path, totalBytes: bytes)
+        storage.updateScreenshotFileSizes(segmentPath: path, totalBytes: bytes)
       }
     }
   }
