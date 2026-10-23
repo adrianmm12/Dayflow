@@ -11,7 +11,6 @@ import AppKit
 import Combine
 import CoreGraphics
 import Foundation
-@preconcurrency import ScreenCaptureKit
 import Sentry
 
 // MARK: - Configuration
@@ -92,10 +91,12 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   init(
     autoStart: Bool = true,
     frameStore: FrameStore = .shared,
-    recordingState: RecordingState = .shared
+    recordingState: RecordingState = .shared,
+    captureSource: ScreenCaptureSource = ScreenKitCaptureSource()
   ) {
     self.frameStore = frameStore
     self.recordingState = recordingState
+    self.captureSource = captureSource
     super.init()
     dbg("init – autoStart = \(autoStart)")
 
@@ -155,6 +156,12 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   /// production recording-state toggles (tests / future headless hosts).
   private let recordingState: RecordingState
 
+  /// Where frames come from. Production uses the `.shared`-equivalent default
+  /// (`ScreenKitCaptureSource` → real ScreenCaptureKit); injected instances
+  /// supply synthetic images for tests / future headless hosts without
+  /// touching ScreenCaptureKit or screen-recording permission.
+  private let captureSource: ScreenCaptureSource
+
   private let q = DispatchQueue(label: "com.dayflow.recorder", qos: .userInitiated)
   private var captureTimer: DispatchSourceTimer?
   private var sub: AnyCancellable?
@@ -165,20 +172,14 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   private var currentDisplayID: CGDirectDisplayID?
   private var requestedDisplayID: CGDirectDisplayID?
 
-  // ScreenCaptureKit objects (refreshed on each capture cycle).
+  // The display selected for capture (refreshed on each capture cycle).
   // Written on `q` (stop/permission loss) and from async setup/refresh tasks,
-  // read from capture tasks on the cooperative pool. Guard them with a lock so a
-  // reader never retains a reference that another thread is releasing.
+  // read from capture tasks on the cooperative pool. Guard it with a lock so a
+  // reader never races a writer.
   private let displayLock = NSLock()
-  private var _cachedContent: SCShareableContent?
-  private var _cachedDisplay: SCDisplay?
+  private var _cachedDisplay: CaptureDisplay?
 
-  private var cachedContent: SCShareableContent? {
-    get { displayLock.withLock { _cachedContent } }
-    set { displayLock.withLock { _cachedContent = newValue } }
-  }
-
-  private var cachedDisplay: SCDisplay? {
+  private var cachedDisplay: CaptureDisplay? {
     get { displayLock.withLock { _cachedDisplay } }
     set { displayLock.withLock { _cachedDisplay = newValue } }
   }
@@ -271,7 +272,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.displayRefreshWorkItem = nil
       self.displayRefreshPending = false
       self.setupFailingSince = nil
-      self.cachedContent = nil
+      self.captureSource.reset()
       self.cachedDisplay = nil
       self.currentDisplayID = nil
       frameStore.finishCurrentSegment()
@@ -286,39 +287,37 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   // MARK: - Capture Setup
 
   private func setupCapture() async {
-    guard ScreenRecordingPermissionNotice.isGranted else {
+    guard captureSource.isPermissionGranted else {
       handleMissingScreenRecordingPermission(reason: "setupCapture")
       return
     }
 
     do {
-      // 1. Get shareable content (requires screen recording permission)
+      // 1. Enumerate displays (requires screen recording permission)
       monitor.recordRequest(.shareableContent, source: .recorderSetup)
-      let content = try await SCShareableContent.excludingDesktopWindows(
-        false, onScreenWindowsOnly: true)
-      cachedContent = content
+      let displays = try await captureSource.shareableDisplays()
 
       // 2. Choose display: prefer requested → active. Defer if preferred is missing from the snapshot.
-      let displaysByID: [CGDirectDisplayID: SCDisplay] = Dictionary(
-        uniqueKeysWithValues: content.displays.map { ($0.displayID, $0) }
+      let displaysByID: [CGDirectDisplayID: CaptureDisplay] = Dictionary(
+        uniqueKeysWithValues: displays.map { ($0.displayID, $0) }
       )
       let trackerID: CGDirectDisplayID? = await MainActor.run { [weak tracker] in
         tracker?.activeDisplayID
       }
       let preferredID = requestedDisplayID ?? trackerID
 
-      let display: SCDisplay?
+      let display: CaptureDisplay?
       if let pid = preferredID {
         display = displaysByID[pid]
         if display == nil {
           requestedDisplayID = pid
           dbg(
-            "setupCapture: preferred display \(pid) not in snapshot (count=\(content.displays.count)); deferring"
+            "setupCapture: preferred display \(pid) not in snapshot (count=\(displays.count)); deferring"
           )
         } else {
           requestedDisplayID = nil
         }
-      } else if let first = content.displays.first {
+      } else if let first = displays.first {
         display = first
         requestedDisplayID = nil
       } else {
@@ -359,7 +358,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     } catch {
       dbg("setupCapture failed – \(error.localizedDescription)")
 
-      if !ScreenRecordingPermissionNotice.isGranted {
+      if !captureSource.isPermissionGranted {
         handleMissingScreenRecordingPermission(reason: "setupCapture_failed_permission")
         return
       }
@@ -559,7 +558,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       dbg("captureScreenshot skipped - no display")
       return .missingDisplay
     }
-    guard ScreenRecordingPermissionNotice.isGranted else {
+    guard captureSource.isPermissionGranted else {
       handleMissingScreenRecordingPermission(reason: "captureScreenshot")
       return .skipped
     }
@@ -589,36 +588,14 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
         return .succeeded
       }
 
-      // 1. Create content filter for the display
-      let excludedApplications =
-        cachedContent.map {
-          RecordingPrivacyPreferences.blockedScreenCaptureApplications(in: $0)
-        } ?? []
-      let filter =
-        excludedApplications.isEmpty
-        ? SCContentFilter(display: display, excludingWindows: [])
-        : SCContentFilter(
-          display: display,
-          excludingApplications: excludedApplications,
-          exceptingWindows: []
-        )
-
-      // 2. Configure screenshot
-      let config = SCStreamConfiguration()
-
-      config.width = captureSize.width
-      config.height = captureSize.height
-      config.scalesToFit = true
-      config.showsCursor = true
-
-      // 3. Capture screenshot
+      // Capture the frame through the acquisition seam. Permission preflight,
+      // display enumeration, and the actual screenshot request all belong to
+      // the capture source; everything above this point is orchestration.
       monitor.recordRequest(.screenshot, source: .recorderCapture)
-      let image = try await SCScreenshotManager.captureImage(
-        contentFilter: filter,
-        configuration: config
-      )
+      let image = try await captureSource.captureImage(
+        of: display, width: captureSize.width, height: captureSize.height)
 
-      // 4. Encode into the current HEVC segment and register in the database
+      // Encode into the current HEVC segment and register in the database
       try appendFrame(image, capturedAt: captureTime, idleSecondsAtCapture: idleSecondsAtCapture)
       dbg("📸 Frame appended (\(image.width)x\(image.height))")
       return .succeeded
@@ -626,7 +603,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     } catch {
       dbg("❌ Screenshot capture failed: \(error.localizedDescription)")
 
-      if !ScreenRecordingPermissionNotice.isGranted {
+      if !captureSource.isPermissionGranted {
         handleMissingScreenRecordingPermission(reason: "captureScreenshot_failed_permission")
         return .skipped
       }
@@ -655,7 +632,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     }
   }
 
-  private func scaledCaptureSize(for display: SCDisplay) -> (width: Int, height: Int) {
+  private func scaledCaptureSize(for display: CaptureDisplay) -> (width: Int, height: Int) {
     let targetHeight = Double(ScreenshotConfig.captureHeight)
     let aspectRatio = Double(display.width) / Double(display.height)
     var width = Int(targetHeight * aspectRatio)
@@ -718,37 +695,35 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
 
   /// Only call through `runDisplayRefresh()`.
   private func refreshDisplay() async {
-    guard ScreenRecordingPermissionNotice.isGranted else {
+    guard captureSource.isPermissionGranted else {
       handleMissingScreenRecordingPermission(reason: "refreshDisplay")
       return
     }
 
     do {
       monitor.recordRequest(.shareableContent, source: .recorderRefresh)
-      let content = try await SCShareableContent.excludingDesktopWindows(
-        false, onScreenWindowsOnly: true)
-      cachedContent = content
+      let displays = try await captureSource.shareableDisplays()
 
       // Prefer requested display over current; hold if missing from snapshot.
       let targetID = requestedDisplayID ?? currentDisplayID
 
       if let id = targetID {
-        if let display = content.displays.first(where: { $0.displayID == id }) {
+        if let display = displays.first(where: { $0.displayID == id }) {
           cachedDisplay = display
           currentDisplayID = id
           if requestedDisplayID == id { requestedDisplayID = nil }
           dbg("Switched to display \(id)")
         } else {
           dbg(
-            "refreshDisplay: target \(id) not in snapshot (count=\(content.displays.count)); keeping current"
+            "refreshDisplay: target \(id) not in snapshot (count=\(displays.count)); keeping current"
           )
         }
-      } else if let first = content.displays.first, cachedDisplay == nil {
+      } else if let first = displays.first, cachedDisplay == nil {
         cachedDisplay = first
         currentDisplayID = first.displayID
       }
     } catch {
-      if !ScreenRecordingPermissionNotice.isGranted {
+      if !captureSource.isPermissionGranted {
         handleMissingScreenRecordingPermission(reason: "refreshDisplay_failed_permission")
         return
       }
@@ -762,7 +737,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     q.async { [weak self] in
       guard let self else { return }
       self.stopCaptureTimer()
-      self.cachedContent = nil
+      self.captureSource.reset()
       self.cachedDisplay = nil
       self.currentDisplayID = nil
       if self.state != .idle {
