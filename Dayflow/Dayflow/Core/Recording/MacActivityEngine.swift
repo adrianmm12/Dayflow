@@ -42,16 +42,39 @@ final class MacActivityEngine {
   /// `LLMServicing`).
   private let analysis: any AnalysisManaging
 
-  /// Both parameters default to the shared production singletons;
+  /// The recording-control state the engine's capture façade drives and the
+  /// recorder observes. Production defaults to the shared state; tests and
+  /// future engine hosts inject an isolated `RecordingState` so
+  /// `startCapture()`/`stopCapture()`/`isCaptureEnabled` and the constructed
+  /// recorder stay coherent on ONE state object instead of meeting by
+  /// accident via the singleton.
+  private let recordingState: RecordingState
+
+  /// Constructs the recorder when `start()` runs. Receives the engine's own
+  /// `recordingState` so the recorder can never observe a different state
+  /// than the capture façade drives — in production AND in isolated
+  /// compositions. Kept as the same lifecycle point (inside `start()`, not
+  /// the initializer); the closure is instance-owned and immutable after
+  /// construction.
+  private let makeRecorder: @MainActor (RecordingState) -> ScreenRecorder
+
+  /// All parameters default to the shared production singletons;
   /// `MacActivityEngine()` therefore continues to resolve to
-  /// `StorageManager.shared` + `AnalysisManager.shared` with no call-site
-  /// changes.
+  /// `StorageManager.shared` + `AnalysisManager.shared` +
+  /// `RecordingState.shared` + the real `ScreenRecorder` factory with no
+  /// call-site changes.
   init(
     storage: any StorageManaging = StorageManager.shared,
-    analysis: any AnalysisManaging = AnalysisManager.shared
+    analysis: any AnalysisManaging = AnalysisManager.shared,
+    recordingState: RecordingState = .shared,
+    makeRecorder: @MainActor @escaping (RecordingState) -> ScreenRecorder = { state in
+      ScreenRecorder(autoStart: true, recordingState: state)
+    }
   ) {
     self.storage = storage
     self.analysis = analysis
+    self.recordingState = recordingState
+    self.makeRecorder = makeRecorder
   }
 
   /// Seeds the recording flag low, then constructs the recorder so the first
@@ -63,8 +86,8 @@ final class MacActivityEngine {
   /// also runs FrameStore's launch reconciliation, which is the engine's first
   /// touch of the shared storage database.
   func start() {
-    RecordingState.shared.isRecording = false
-    recorder = ScreenRecorder(autoStart: true)
+    recordingState.isRecording = false
+    recorder = makeRecorder(recordingState)
   }
 
   /// Starts the provider-routed analysis background job. Moved verbatim from
@@ -90,19 +113,39 @@ final class MacActivityEngine {
   }
 
   /// Flushes engine storage state during application termination by
-  /// checkpointing (and truncating) the storage WAL. The open capture
-  /// segment is finalized separately by the recorder's own will-terminate
-  /// observer (FrameStore.finishCurrentSegment()).
+  /// checkpointing (and truncating) the storage WAL — but only AFTER the
+  /// engine-owned recorder has deterministically finished its capture work.
   ///
-  /// Checkpoints the engine's injected storage: production wiring resolves
-  /// to `StorageManager.shared`'s truncate checkpoint (identical behavior to
-  /// before), and an engine composed with isolated storage flushes only that
-  /// isolated database — the production database is never touched.
+  /// Ordering guarantee (replaces the previous reliance on the recorder's
+  /// independent `NSApplication.willTerminate` observer, whose delivery
+  /// order relative to this call was unspecified):
   ///
-  /// Known and intentionally unresolved: the AppDelegate-driven checkpoint
-  /// can still run before the recorder's will-terminate observer finishes
-  /// the current segment (a separate lifecycle task).
+  /// ```text
+  /// owned ScreenRecorder stops capture            (synchronous, on its queue)
+  ///   → its FrameStore's open segment finalizes  (synchronous, write queue)
+  ///   → final segment metadata/file-size DB writes commit
+  ///   → injected storage.checkpointTruncate() runs
+  ///   → shutdown returns
+  /// ```
+  ///
+  /// `stopAndWait()` drains the recorder's serial queue before performing the
+  /// stop, so every earlier recorder write (screenshot rows, segment
+  /// finalization, file sizes) happens-before the truncate checkpoint. The
+  /// injected storage is flushed exactly as before: production wiring resolves
+  /// to `StorageManager.shared`'s truncate checkpoint, and an engine composed
+  /// with isolated storage flushes only that isolated database.
+  ///
+  /// The recorder's runtime capture state and the user's persisted recording
+  /// preference are deliberately untouched: this stops the owned recorder
+  /// directly (bypassing RecordingState), so a user who was recording when
+  /// they quit still has their "recording on" preference for the next launch.
+  ///
+  /// Repeated calls are harmless: the stop work is nil-safe and finalization
+  /// is idempotent, and the truncate checkpoint can repeat. The recorder's
+  /// `willTerminate` observer remains as a compatibility fallback; after this
+  /// path has finalized the segment it is a no-op.
   func shutdown() {
+    recorder?.stopAndWait()
     storage.checkpointTruncate()
   }
 
@@ -185,14 +228,14 @@ final class MacActivityEngine {
   /// correction), and posts the screen-recording permission notice for the
   /// host to surface.
   func startCapture() {
-    RecordingState.shared.setRecording(true, analyticsReason: "engine")
+    recordingState.setRecording(true, analyticsReason: "engine")
   }
 
   /// Requests screen capture to stop. Delegates to the engine-owned
   /// recording state; the preference persists, matching the manual toggle's
   /// semantics.
   func stopCapture() {
-    RecordingState.shared.setRecording(false, analyticsReason: "engine")
+    recordingState.setRecording(false, analyticsReason: "engine")
   }
 
   /// Whether the recording-control flag is currently enabled: a read-only
@@ -200,7 +243,7 @@ final class MacActivityEngine {
   /// is not an instantaneous capture sensor — the recorder pauses during
   /// sleep/lock while this flag stays true.
   var isCaptureEnabled: Bool {
-    RecordingState.shared.isRecording
+    recordingState.isRecording
   }
 }
 

@@ -263,25 +263,58 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   }
 
   func stop() {
-    q.async { [weak self] in
-      guard let self else { return }
-      self.stopCaptureTimer()
-      self.setupRetryWorkItem?.cancel()
-      self.setupRetryWorkItem = nil
-      self.displayRefreshWorkItem?.cancel()
-      self.displayRefreshWorkItem = nil
-      self.displayRefreshPending = false
-      self.setupFailingSince = nil
-      self.captureSource.reset()
-      self.cachedDisplay = nil
-      self.currentDisplayID = nil
-      frameStore.finishCurrentSegment()
+    q.async { [weak self] in self?.performStop() }
+  }
 
-      if self.state != .paused {
-        self.transition(to: .idle, context: "stopped")
-      }
-      dbg("capture stopped")
+  /// Termination-ordering variant of `stop()`: the exact same stop work,
+  /// performed synchronously on the recorder's serial queue, returning only
+  /// when it has completed.
+  ///
+  /// Happens-before guarantee for callers: `q` is FIFO, so every
+  /// recorder-queue operation enqueued before this call (capture ticks and
+  /// their completion handling, setup completion, an ordinary `stop()`) has
+  /// drained by the time the stop work runs; the stop work itself tears down
+  /// the capture timer and pending retry/refresh work, transitions the state
+  /// machine to idle, and calls `frameStore.finishCurrentSegment()`, which is
+  /// synchronous on the frame store's write queue and performs the final
+  /// segment finalization plus its metadata/file-size database writes. So
+  /// when this returns, the recorder can produce no further screenshot rows
+  /// and its frame store has no open segment. A capture that was already in
+  /// flight past its state check is dropped by `appendFrame`'s existing
+  /// `state == .capturing` re-check — exactly as during ordinary `stop()` —
+  /// so it cannot reopen a segment afterwards.
+  ///
+  /// Safe from the engine's termination call site (the main actor) because
+  /// the stop work touches only this queue, the frame store's write queue,
+  /// and the storage write path — none of which block on the main actor, and
+  /// no work on `q` ever synchronizes back onto `q`. Never call this on `q`
+  /// itself.
+  ///
+  /// Ordinary runtime behavior is unchanged: user-facing stop/toggle paths
+  /// keep using asynchronous `stop()`; only explicit termination callers
+  /// (the engine's `shutdown()`) use this synchronous form.
+  func stopAndWait() {
+    q.sync { [weak self] in self?.performStop() }
+  }
+
+  /// The stop work. Runs only on the recorder's serial queue `q`.
+  private func performStop() {
+    stopCaptureTimer()
+    setupRetryWorkItem?.cancel()
+    setupRetryWorkItem = nil
+    displayRefreshWorkItem?.cancel()
+    displayRefreshWorkItem = nil
+    displayRefreshPending = false
+    setupFailingSince = nil
+    captureSource.reset()
+    cachedDisplay = nil
+    currentDisplayID = nil
+    frameStore.finishCurrentSegment()
+
+    if state != .paused {
+      transition(to: .idle, context: "stopped")
     }
+    dbg("capture stopped")
   }
 
   // MARK: - Capture Setup
