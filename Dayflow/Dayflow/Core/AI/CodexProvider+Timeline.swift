@@ -35,7 +35,7 @@ extension CodexProvider {
     do {
       let frames = try await OneStepTimelineFrames.write(
         screenshots, maxHeight: Self.timelineFrameMaxHeight,
-        directoryPrefix: "Dayflow-codex-timeline")
+        directoryPrefix: "Dayflow-codex-timeline", frameStore: frameStore)
       defer { frames.cleanup() }
 
       // The window stands in for the observations the two-step path would have, so the same

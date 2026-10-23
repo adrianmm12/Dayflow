@@ -191,10 +191,13 @@ private struct DayflowTranscribeResponse: Codable, Sendable {
 final class DayflowBackendProvider {
   private let token: String
   private let endpoint: String
+  /// The capture store whose segments this provider decodes screenshots from.
+  private let frameStore: FrameStore
 
-  init(token: String, endpoint: String) {
+  init(token: String, endpoint: String, frameStore: FrameStore = .shared) {
     self.token = token
     self.endpoint = endpoint
+    self.frameStore = frameStore
     #if DEBUG
       print(
         "[DayflowBackendProvider] init endpoint=\(endpoint) auth_id_length=\(token.count)"
@@ -395,7 +398,9 @@ final class DayflowBackendProvider {
     let sampledScreenshots = Self.evenlySampled(sortedScreenshots, maxCount: Self.maxFramesPerBatch)
     let screenshotPayloads = sampledScreenshots.compactMap {
       screenshot -> DayflowScreenshotPayload? in
-      guard let data = screenshot.jpegData(maxHeight: 720, quality: 0.85) else { return nil }
+      guard
+        let data = screenshot.jpegData(from: frameStore, maxHeight: 720, quality: 0.85)
+      else { return nil }
       return DayflowScreenshotPayload(
         capturedAt: screenshot.capturedAt,
         imageBase64: data.base64EncodedString()
@@ -577,7 +582,7 @@ final class DayflowBackendProvider {
       screenshot -> DayflowScreenshotPayload? in
       guard
         let data = screenshot.jpegData(
-          maxHeight: Self.timelineFrameMaxHeight, quality: 0.85)
+          from: frameStore, maxHeight: Self.timelineFrameMaxHeight, quality: 0.85)
       else { return nil }
       return DayflowScreenshotPayload(
         capturedAt: screenshot.capturedAt,

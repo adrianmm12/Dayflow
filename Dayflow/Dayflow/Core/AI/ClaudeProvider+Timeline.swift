@@ -36,7 +36,7 @@ extension ClaudeProvider {
     do {
       let frames = try await OneStepTimelineFrames.write(
         screenshots, maxHeight: Self.timelineFrameMaxHeight,
-        directoryPrefix: "Dayflow-claude-timeline")
+        directoryPrefix: "Dayflow-claude-timeline", frameStore: frameStore)
       defer { frames.cleanup() }
 
       // The window stands in for the observations the two-step path would have, so the same

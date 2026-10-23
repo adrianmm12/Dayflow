@@ -11,6 +11,8 @@ final class OllamaProvider {
   private let injectedRuntimeConfiguration: OpenAICompatibleRuntimeConfiguration?
   /// Destination for `llm_calls` logging; defaults to production storage.
   let llmLogger: LLMLogger
+  /// The capture store whose segments this provider decodes screenshots from.
+  let frameStore: FrameStore
   let screenshotInterval: TimeInterval = 10  // seconds between screenshots
   // Read persisted local settings
   var savedModelId: String {
@@ -72,19 +74,25 @@ final class OllamaProvider {
     return OllamaPromptPreferences.load()
   }
 
-  init(endpoint: String = "http://localhost:1234", llmLogger: LLMLogger = .production) {
+  init(
+    endpoint: String = "http://localhost:1234", llmLogger: LLMLogger = .production,
+    frameStore: FrameStore = .shared
+  ) {
     self.endpoint = endpoint
     self.injectedRuntimeConfiguration = nil
     self.llmLogger = llmLogger
+    self.frameStore = frameStore
   }
 
   init(
     openAICompatible configuration: OpenAICompatibleRuntimeConfiguration,
-    llmLogger: LLMLogger = .production
+    llmLogger: LLMLogger = .production,
+    frameStore: FrameStore = .shared
   ) {
     self.endpoint = configuration.endpoint
     self.injectedRuntimeConfiguration = configuration
     self.llmLogger = llmLogger
+    self.frameStore = frameStore
   }
 
   // Strip user references from observations to prevent LLM from using third-person language

@@ -13,11 +13,17 @@ final class GemmaBackupProvider {
   let baseURL = "https://generativelanguage.googleapis.com/v1beta/models"
   /// Destination for `llm_calls` logging; defaults to production storage.
   let llmLogger: LLMLogger
+  /// The capture store whose segments this provider decodes screenshots from.
+  let frameStore: FrameStore
 
-  init(apiKey: String, model: String = "gemma-4-31b-it", llmLogger: LLMLogger = .production) {
+  init(
+    apiKey: String, model: String = "gemma-4-31b-it", llmLogger: LLMLogger = .production,
+    frameStore: FrameStore = .shared
+  ) {
     self.apiKey = apiKey.components(separatedBy: .whitespacesAndNewlines).joined()
     self.model = model
     self.llmLogger = llmLogger
+    self.frameStore = frameStore
   }
 
   // MARK: - Public API
@@ -44,7 +50,9 @@ final class GemmaBackupProvider {
       .map { sortedScreenshots[$0] }
 
     let frameData = sampledScreenshots.enumerated().compactMap { index, screenshot -> FrameData? in
-      guard let imageData = screenshot.jpegData(maxHeight: 720, quality: 0.7) else { return nil }
+      guard
+        let imageData = screenshot.jpegData(from: frameStore, maxHeight: 720, quality: 0.7)
+      else { return nil }
       let base64String = imageData.base64EncodedString()
       let relativeTimestamp = TimeInterval(screenshot.capturedAt - firstTs)
       return FrameData(index: index + 1, base64Image: base64String, timestamp: relativeTimestamp)

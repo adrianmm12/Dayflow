@@ -25,7 +25,7 @@ extension ClaudeProvider {
     let preparedInput: ClaudePreparedTranscriptionInput
 
     do {
-      preparedInput = try await ClaudeTranscriptionInputBuilder().prepare(
+      preparedInput = try await ClaudeTranscriptionInputBuilder(frameStore: frameStore).prepare(
         screenshots: screenshots
       )
     } catch {

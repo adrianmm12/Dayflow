@@ -32,7 +32,8 @@ struct OneStepTimelineFrames {
   }
 
   static func write(
-    _ screenshots: [Screenshot], maxHeight: Int, directoryPrefix: String
+    _ screenshots: [Screenshot], maxHeight: Int, directoryPrefix: String,
+    frameStore: FrameStore = .shared
   ) async throws -> OneStepTimelineFrames {
     try await Task.detached(priority: .utility) {
       let sorted = screenshots.sorted { $0.capturedAt < $1.capturedAt }
@@ -47,7 +48,8 @@ struct OneStepTimelineFrames {
       for (index, screenshot) in selected.enumerated() {
         let url = directory.appendingPathComponent(String(format: "frame_%02d.jpg", index + 1))
         do {
-          try screenshot.writeJPEG(to: url, maxHeight: maxHeight, quality: 0.85)
+          try screenshot.writeJPEG(
+            from: frameStore, to: url, maxHeight: maxHeight, quality: 0.85)
           frames.append(.init(capturedAt: screenshot.capturedAt, url: url))
         } catch {
           print(

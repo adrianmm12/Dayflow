@@ -112,6 +112,15 @@ final class LLMService: LLMServicing {
   /// does not make inference isolated.
   private let storage: any StorageManaging
 
+  /// The capture store that owns the screenshot segments the service's
+  /// providers decode: providers constructed by this service load screenshot
+  /// pixels through this `FrameStore`, mirroring how `llmCallLogger` ties
+  /// their `llm_calls` rows to the same injected storage. Production
+  /// (`LLMService.shared` and any no-argument construction) resolves to
+  /// `FrameStore.shared`; tests and future engine hosts inject the isolated
+  /// `FrameStore` that captured the screenshots the service processes.
+  private let frameStore: FrameStore
+
   /// Provider-execution seam: builds the `TimelineProviderContext` (the
   /// transcription/card-generation closures `processBatch` invokes) for a
   /// routing-chosen `LLMProviderID`. Routing — deciding WHICH provider —
@@ -124,9 +133,11 @@ final class LLMService: LLMServicing {
 
   init(
     storage: any StorageManaging = StorageManager.shared,
+    frameStore: FrameStore = .shared,
     providerContextFor: ((LLMProviderID) throws -> TimelineProviderContext)? = nil
   ) {
     self.storage = storage
+    self.frameStore = frameStore
     self.providerContextFor = providerContextFor
   }
 
@@ -229,7 +240,8 @@ final class LLMService: LLMServicing {
 
   private func makeGemmaBackupProvider() -> GemmaBackupProvider? {
     if let apiKey = KeychainManager.shared.retrieve(for: "gemini"), !apiKey.isEmpty {
-      return GemmaBackupProvider(apiKey: apiKey, llmLogger: llmCallLogger)
+      return GemmaBackupProvider(
+        apiKey: apiKey, llmLogger: llmCallLogger, frameStore: frameStore)
     }
     print("❌ [LLMService] Failed to retrieve Gemini API key for Gemma fallback")
     return nil
@@ -245,7 +257,7 @@ final class LLMService: LLMServicing {
     print(
       "🔐 [LLMService] Dayflow provider ready endpoint=\(endpoint) token_length=\(token.count)"
     )
-    return DayflowBackendProvider(token: token, endpoint: endpoint)
+    return DayflowBackendProvider(token: token, endpoint: endpoint, frameStore: frameStore)
   }
 
   private func resolvedDayflowEndpoint(savedEndpoint: String?) -> String? {
@@ -253,7 +265,7 @@ final class LLMService: LLMServicing {
   }
 
   private func makeOllamaProvider(endpoint: String) -> OllamaProvider {
-    OllamaProvider(endpoint: endpoint, llmLogger: llmCallLogger)
+    OllamaProvider(endpoint: endpoint, llmLogger: llmCallLogger, frameStore: frameStore)
   }
 
   private func localProviderEndpoint() -> String {
@@ -273,7 +285,8 @@ final class LLMService: LLMServicing {
       configuration: configuration,
       bearerToken: apiKey
     )
-    return OpenAICompatibleProvider(configuration: runtimeConfiguration, llmLogger: llmCallLogger)
+    return OpenAICompatibleProvider(
+      configuration: runtimeConfiguration, llmLogger: llmCallLogger, frameStore: frameStore)
   }
 
   private func providerLabel(for providerID: LLMProviderID) -> String {
@@ -375,7 +388,7 @@ final class LLMService: LLMServicing {
         ), fallbackState: nil
       )
     case .chatGPT:
-      let provider = CodexProvider(llmLogger: llmCallLogger)
+      let provider = CodexProvider(llmLogger: llmCallLogger, frameStore: frameStore)
       return (
         actions: BatchProviderActions(
           transcribeScreenshots: provider.transcribeScreenshots,
@@ -384,7 +397,7 @@ final class LLMService: LLMServicing {
         ), fallbackState: nil
       )
     case .claude:
-      let provider = ClaudeProvider(llmLogger: llmCallLogger)
+      let provider = ClaudeProvider(llmLogger: llmCallLogger, frameStore: frameStore)
       return (
         actions: BatchProviderActions(
           transcribeScreenshots: provider.transcribeScreenshots,

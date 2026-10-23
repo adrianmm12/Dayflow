@@ -6,9 +6,12 @@ final class CodexProvider: AgentCLISupporting {
   let runner = ChatCLIProcessRunner()
   let config = ChatCLIConfigManager.shared
   let llmLogger: LLMLogger
+  /// The capture store whose segments this provider decodes screenshots from.
+  let frameStore: FrameStore
 
-  init(llmLogger: LLMLogger = .production) {
+  init(llmLogger: LLMLogger = .production, frameStore: FrameStore = .shared) {
     self.llmLogger = llmLogger
+    self.frameStore = frameStore
     config.ensureWorkingDirectory()
   }
 

@@ -202,26 +202,32 @@ struct ClaudeTranscriptionInputBuilder: Sendable {
 
   private let recognizer: any ClaudeFrameTextRecognizing
   private let temporaryDirectoryRoot: URL
+  /// The capture store whose segments are decoded for the contact sheet.
+  private let frameStore: FrameStore
 
   init(
     recognizer: any ClaudeFrameTextRecognizing = AppleVisionClaudeFrameTextRecognizer(),
-    temporaryDirectoryRoot: URL? = nil
+    temporaryDirectoryRoot: URL? = nil,
+    frameStore: FrameStore = .shared
   ) {
     self.recognizer = recognizer
     self.temporaryDirectoryRoot =
       temporaryDirectoryRoot
       ?? FileManager.default.temporaryDirectory.appendingPathComponent(
         "DayflowClaudeTranscription", isDirectory: true)
+    self.frameStore = frameStore
   }
 
   func prepare(screenshots: [Screenshot]) async throws -> ClaudePreparedTranscriptionInput {
     let recognizer = recognizer
     let temporaryDirectoryRoot = temporaryDirectoryRoot
+    let frameStore = frameStore
     return try await Task.detached(priority: .utility) {
       try Self.prepareSynchronously(
         screenshots: screenshots,
         recognizer: recognizer,
-        temporaryDirectoryRoot: temporaryDirectoryRoot
+        temporaryDirectoryRoot: temporaryDirectoryRoot,
+        frameStore: frameStore
       )
     }.value
   }
@@ -324,7 +330,8 @@ struct ClaudeTranscriptionInputBuilder: Sendable {
   private static func prepareSynchronously(
     screenshots: [Screenshot],
     recognizer: any ClaudeFrameTextRecognizing,
-    temporaryDirectoryRoot: URL
+    temporaryDirectoryRoot: URL,
+    frameStore: FrameStore = .shared
   ) throws -> ClaudePreparedTranscriptionInput {
     guard !screenshots.isEmpty else { throw ClaudeTranscriptionInputBuilderError.noScreenshots }
 
@@ -343,7 +350,9 @@ struct ClaudeTranscriptionInputBuilder: Sendable {
       guard screenshot.isAvailable else {
         throw ClaudeTranscriptionInputBuilderError.missingImage(screenshot.filePath)
       }
-      guard let image = screenshot.loadCGImage(), image.width > 0, image.height > 0 else {
+      guard
+        let image = screenshot.loadCGImage(from: frameStore), image.width > 0, image.height > 0
+      else {
         throw ClaudeTranscriptionInputBuilderError.cannotLoadImage(screenshot.filePath)
       }
       images.append(image)

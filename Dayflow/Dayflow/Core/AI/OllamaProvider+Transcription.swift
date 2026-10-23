@@ -524,7 +524,8 @@ extension OllamaProvider {
   private func loadScreenshotAsFrameData(_ screenshot: Screenshot, relativeTo baseTimestamp: Int)
     -> FrameData?
   {
-    guard let imageData = screenshot.jpegData(maxHeight: 720, quality: 0.85) else {
+    guard let imageData = screenshot.jpegData(from: frameStore, maxHeight: 720, quality: 0.85)
+    else {
       return nil
     }
 

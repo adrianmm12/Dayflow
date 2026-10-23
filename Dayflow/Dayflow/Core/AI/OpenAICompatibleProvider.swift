@@ -9,14 +9,17 @@ final class OpenAICompatibleProvider: ChatGPTTimelinePromptSupporting {
   private let transport: OllamaProvider
   private let configuration: OpenAICompatibleRuntimeConfiguration
   private let completion: Completion?
+  /// The capture store whose segments this provider decodes screenshots from.
+  let frameStore: FrameStore
 
   init(
     configuration: OpenAICompatibleRuntimeConfiguration, completion: Completion? = nil,
-    llmLogger: LLMLogger = .production
+    llmLogger: LLMLogger = .production, frameStore: FrameStore = .shared
   ) {
     self.configuration = configuration
     self.transport = OllamaProvider(openAICompatible: configuration, llmLogger: llmLogger)
     self.completion = completion
+    self.frameStore = frameStore
   }
 
   func makeRequest(content: [MessageContent]) -> ChatRequest {
@@ -111,7 +114,8 @@ final class OpenAICompatibleProvider: ChatGPTTimelinePromptSupporting {
     var images: [MessageContent] = []
     var validFrameCount = 0
     for screenshot in selected {
-      guard let jpeg = screenshot.jpegData(maxHeight: 720, quality: 0.85) else { continue }
+      guard let jpeg = screenshot.jpegData(from: frameStore, maxHeight: 720, quality: 0.85)
+      else { continue }
       let timestamp = formatSeconds(TimeInterval(screenshot.capturedAt - first.capturedAt))
       images.append(.init(type: "text", text: "Screenshot at \(timestamp):", image_url: nil))
       images.append(

@@ -41,7 +41,7 @@ extension CodexProvider {
     let imagePaths: [String] = sampledScreenshots.enumerated().compactMap { index, screenshot in
       let url = imageDirectory.appendingPathComponent(String(format: "frame_%02d.jpg", index))
       do {
-        try screenshot.writeJPEG(to: url, maxHeight: 720, quality: 0.85)
+        try screenshot.writeJPEG(from: frameStore, to: url, maxHeight: 720, quality: 0.85)
         return url.path
       } catch {
         print("[ChatCLI] ⚠️ Could not decode screenshot \(screenshot.id): \(error)")
