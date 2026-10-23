@@ -89,7 +89,8 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   // MARK: - Initialization
 
   @MainActor
-  init(autoStart: Bool = true) {
+  init(autoStart: Bool = true, frameStore: FrameStore = .shared) {
+    self.frameStore = frameStore
     super.init()
     dbg("init – autoStart = \(autoStart)")
 
@@ -128,7 +129,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     ScreenCaptureMonitor.shared.startObserving()
     registerForSleepAndLock()
     registerForCaptureSettingChanges()
-    FrameStore.shared.reconcileAfterLaunch()
+    frameStore.reconcileAfterLaunch()
   }
 
   deinit {
@@ -138,6 +139,11 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   }
 
   // MARK: - Properties
+
+  /// Where captured frames are written. Production uses the `.shared` default
+  /// (`FrameStore.shared` → `StorageManager.shared`); injected instances point
+  /// at isolated storage for tests / future headless hosts.
+  private let frameStore: FrameStore
 
   private let q = DispatchQueue(label: "com.dayflow.recorder", qos: .userInitiated)
   private var captureTimer: DispatchSourceTimer?
@@ -258,7 +264,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.cachedContent = nil
       self.cachedDisplay = nil
       self.currentDisplayID = nil
-      FrameStore.shared.finishCurrentSegment()
+      frameStore.finishCurrentSegment()
 
       if self.state != .paused {
         self.transition(to: .idle, context: "stopped")
@@ -632,7 +638,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       dbg("frame dropped - recorder stopped mid-capture")
       return
     }
-    let screenshotId = FrameStore.shared.append(
+    let screenshotId = frameStore.append(
       image, capturedAt: capturedAt, idleSecondsAtCapture: idleSecondsAtCapture)
     guard screenshotId != nil else {
       throw ScreenRecorderError.imageConversionFailed
@@ -787,8 +793,8 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
     NotificationCenter.default.addObserver(
       forName: NSApplication.willTerminateNotification,
       object: nil, queue: nil
-    ) { _ in
-      FrameStore.shared.finishCurrentSegment()
+    ) { [frameStore] _ in
+      frameStore.finishCurrentSegment()
     }
   }
 
