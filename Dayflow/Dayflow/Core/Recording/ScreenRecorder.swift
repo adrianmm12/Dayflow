@@ -89,15 +89,20 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   // MARK: - Initialization
 
   @MainActor
-  init(autoStart: Bool = true, frameStore: FrameStore = .shared) {
+  init(
+    autoStart: Bool = true,
+    frameStore: FrameStore = .shared,
+    recordingState: RecordingState = .shared
+  ) {
     self.frameStore = frameStore
+    self.recordingState = recordingState
     super.init()
     dbg("init – autoStart = \(autoStart)")
 
-    wantsRecording = RecordingState.shared.isRecording
+    wantsRecording = recordingState.isRecording
 
     // Observe the app-wide recording flag
-    sub = RecordingState.shared.$isRecording
+    sub = recordingState.$isRecording
       .dropFirst()
       .removeDuplicates()
       .sink { [weak self] rec in
@@ -124,7 +129,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       }
 
     // Honor the current flag once (after subscriptions exist)
-    if autoStart, RecordingState.shared.isRecording { start() }
+    if autoStart, recordingState.isRecording { start() }
 
     ScreenCaptureMonitor.shared.startObserving()
     registerForSleepAndLock()
@@ -144,6 +149,11 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
   /// (`FrameStore.shared` → `StorageManager.shared`); injected instances point
   /// at isolated storage for tests / future headless hosts.
   private let frameStore: FrameStore
+
+  /// The recording-enabled flag this recorder obeys. Production uses the
+  /// `.shared` default; injected instances insulate a recorder from unrelated
+  /// production recording-state toggles (tests / future headless hosts).
+  private let recordingState: RecordingState
 
   private let q = DispatchQueue(label: "com.dayflow.recorder", qos: .userInitiated)
   private var captureTimer: DispatchSourceTimer?
@@ -761,9 +771,10 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.wantsRecording = false
     }
 
+    let state = recordingState
     Task { @MainActor in
-      if RecordingState.shared.isRecording {
-        RecordingState.shared.setRecording(
+      if state.isRecording {
+        state.setRecording(
           false,
           analyticsReason: "permission_missing",
           persistPreference: false
@@ -849,7 +860,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.q.async { [weak self] in
         guard let self else { return }
         Task { @MainActor in
-          if RecordingState.shared.isRecording {
+          if self.recordingState.isRecording {
             self.q.async { [weak self] in
               self?.transition(to: .paused, context: "system sleep")
             }
@@ -890,7 +901,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.q.async { [weak self] in
         guard let self else { return }
         Task { @MainActor in
-          if RecordingState.shared.isRecording {
+          if self.recordingState.isRecording {
             self.q.async { [weak self] in
               self?.transition(to: .paused, context: "screen locked")
             }
@@ -931,7 +942,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
       self.q.async { [weak self] in
         guard let self else { return }
         Task { @MainActor in
-          if RecordingState.shared.isRecording {
+          if self.recordingState.isRecording {
             self.q.async { [weak self] in
               self?.transition(to: .paused, context: "screensaver started")
             }
@@ -975,7 +986,7 @@ final class ScreenRecorder: NSObject, @unchecked Sendable {
         return
       }
       Task { @MainActor in
-        guard RecordingState.shared.isRecording else {
+        guard self.recordingState.isRecording else {
           dbg("\(context) – skip auto-resume (recording disabled)")
           return
         }
