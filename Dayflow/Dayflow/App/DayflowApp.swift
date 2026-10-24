@@ -2,95 +2,72 @@
 //  DayflowApp.swift
 //  Dayflow
 //
+//  Headless engine-host entry point. The SwiftUI App scene, menu commands,
+//  and window registration were removed in the headless-host slice: this
+//  target is now a plain AppKit agent process. The engine lifecycle
+//  (recording, analysis, storage, deterministic shutdown) runs entirely
+//  through the existing AppDelegate, which remains authoritative in this
+//  slice. No window, status surface, or menu is created here.
+//
+//  `MainWindowController` and the notification names below are kept because
+//  existing product code (NotificationService, FlowSessionMirror,
+//  StatusBarController) still references them; with no scene registered,
+//  `showMainWindow()` is a harmless no-op pending the next stripping slice.
+//
 
-import Sparkle
+import AppKit
+import Foundation
 import SwiftUI
 
+@MainActor
 @main
-struct DayflowApp: App {
-  @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+enum DayflowHeadlessMain {
+  /// Keeps the signal dispatch sources alive for the process lifetime.
+  private static var signalSources: [DispatchSourceSignal] = []
 
-  init() {
-    // Writing to stdout after its reader has gone away (app launched from a
-    // terminal or wrapper that exited) raises SIGPIPE and kills the process.
+  static func main() {
+    // Writing to stdout after its reader has gone away (process launched from
+    // a terminal or wrapper that exited) raises SIGPIPE and kills the process.
     // Ignore it so the write simply fails with EPIPE instead.
     signal(SIGPIPE, SIG_IGN)
+
+    // Manual/service-style termination must reach the normal application
+    // termination path so the deterministic engine shutdown runs:
+    //
+    //   SIGINT / SIGTERM
+    //     → NSApplication termination
+    //     → AppDelegate.applicationWillTerminate
+    //     → MacActivityEngine.shutdown()
+    //
+    // Raw POSIX signal handlers must not call Swift/AppKit APIs, so the
+    // signals are ignored here and observed via dispatch sources on the
+    // main queue instead.
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
+    installTerminationRelay(signal: SIGINT, reason: "sigint")
+    installTerminationRelay(signal: SIGTERM, reason: "sigterm")
+
+    let app = NSApplication.shared
+    app.delegate = AppDelegate()
+    // Agent-style presence (LSUIElement in Info.plist is the authoritative
+    // declaration; this is defense in depth for direct-executable launches).
+    app.setActivationPolicy(.accessory)
+    app.run()
   }
 
-  // Sparkle updater manager
-  private let updaterManager = UpdaterManager.shared
-
-  var body: some Scene {
-    Window("Dayflow", id: "main") {
-      // Minimal host shell. The presentation layer (Views/, Menu/) was removed
-      // in the first stripping slice; the engine lifecycle (recording,
-      // analysis, storage) runs entirely through AppDelegate. This window just
-      // keeps the app a regular SwiftUI-lifecycle process with an openable main
-      // window (menu bar / deep links still call MainWindowController).
-      ZStack {
-        MainWindowRegistrationView()
-      }
-      .frame(minWidth: 480, maxWidth: .infinity, minHeight: 320, maxHeight: .infinity)
-    }
-    .windowStyle(.hiddenTitleBar)
-    .windowResizability(.contentMinSize)
-    .defaultSize(width: 1195, height: 675)
-
-    .commands {
-      // Remove the "New Window" command if you want a single window app
-      CommandGroup(replacing: .newItem) {}
-
-      // Add custom menu items after the app info section
-      CommandGroup(after: .appInfo) {
-        Divider()
-        Button("Reset Onboarding") {
-          // Reset the onboarding flag
-          UserDefaults.standard.set(false, forKey: "didOnboard")
-          // Reset the saved onboarding step to start from beginning
-          UserDefaults.standard.set(0, forKey: "onboardingStep")
-          UserDefaults.standard.removeObject(forKey: "onboardingHasPaidAI")
-          UserDefaults.standard.removeObject(forKey: CategoryStore.StoreKeys.onboardingSelectedRole)
-          UserDefaults.standard.removeObject(
-            forKey: CategoryStore.StoreKeys.onboardingAppliedCategoryPreset)
-          UserDefaults.standard.removeObject(
-            forKey: CategoryStore.StoreKeys.onboardingCategoriesCustomized)
-          UserDefaults.standard.removeObject(forKey: "onboardingSelectedProviderID")
-          // Force quit and restart the app to show onboarding
-          Task { @MainActor in
-            AppDelegate.permitTermination(reason: "reset_onboarding")
-            NSApp.terminate(nil)
-          }
-        }
-        .keyboardShortcut("R", modifiers: [.command, .shift])
-      }
-
-      // Add Sparkle's update menu item
-      CommandGroup(after: .appInfo) {
-        Button("Check for Updates…") {
-          updaterManager.checkForUpdates(showUI: true)
-        }
-
-        Button("View Release Notes") {
-          // Activate the app and bring to foreground
-          NSApp.activate(ignoringOtherApps: true)
-
-          // Post notification to show What's New modal
-          NotificationCenter.default.post(name: .showWhatsNew, object: nil)
-        }
-        .keyboardShortcut("N", modifiers: [.command, .shift])
-      }
-
-      CommandGroup(after: .appInfo) {
-        Divider()
-        Button("Flow: Simulate Distraction") {
-          FlowSessionMirror.shared.simulateDistraction()
-        }
-        .keyboardShortcut("D", modifiers: [.command, .shift])
-        Button("Flow: Nudge Style — \(FlowNudgeVariant.current.title)") {
-          FlowNudgeVariant.current = FlowNudgeVariant.current.next
-        }
+  private static func installTerminationRelay(signal sig: Int32, reason: String) {
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler {
+      MainActor.assumeIsolated {
+        // Unblocks AppDelegate.applicationShouldTerminate's soft-quit guard,
+        // then runs the ordinary termination path (engine flush, analytics
+        // finalization, clean exit). Repeated signals are no-ops afterwards.
+        AppDelegate.permitTermination(reason: reason)
+        NSApp.terminate(nil)
       }
     }
+    source.resume()
+    signalSources.append(source)
   }
 }
 
@@ -137,17 +114,5 @@ final class MainWindowController {
     }
 
     openWindowAction(id: "main")
-  }
-}
-
-private struct MainWindowRegistrationView: View {
-  @Environment(\.openWindow) private var openWindow
-
-  var body: some View {
-    Color.clear
-      .frame(width: 0, height: 0)
-      .onAppear {
-        MainWindowController.shared.register(openWindow)
-      }
   }
 }
