@@ -3,11 +3,11 @@ import XCTest
 @testable import Dayflow
 
 /// Focused tests for the LLMServiceEvents seam: hook invocation through
-/// LLMService.eventSink, the headless nil configuration, and the Dayflow
-/// adaptor's forwarding for the benign toast-hide path.
+/// LLMService.eventSink, the headless nil configuration, and installed-sink
+/// replacement.
 ///
-/// Runs hosted in the app, where AppDelegate installs the product sink at
-/// launch, so every test saves and restores the previous sink.
+/// The headless host installs no sink; every test saves and restores the
+/// previous sink.
 final class LLMServiceEventsTests: XCTestCase {
   private final class RecordingEvents: LLMServiceEvents {
     var failurePayloads: [TimelineFailureToastPayload] = []
@@ -91,11 +91,5 @@ final class LLMServiceEventsTests: XCTestCase {
 
     XCTAssertEqual(first.recoveredCount, 1)
     XCTAssertEqual(second.recoveredCount, 1)
-  }
-
-  func testDayflowAdaptorForwardsRecoveryToToastHide() {
-    let hidePosted = expectation(forNotification: .hideTimelineFailureToast, object: nil)
-    DayflowLLMServiceEvents().analysisFailureRecovered()
-    wait(for: [hidePosted], timeout: 2.0)
   }
 }

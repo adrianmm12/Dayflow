@@ -28,7 +28,7 @@ final class FlowEarlyBirdController {
 
   /// Call once at app launch.
   func start() {
-    AppState.shared.$isRecording
+    RecordingState.shared.$isRecording
       .map { _ in () }
       .merge(with: FlowSessionMirror.shared.$snapshot.map { _ in () })
       .merge(with: DayflowAuthManager.shared.$flowEnabled.map { _ in () })
@@ -46,7 +46,7 @@ final class FlowEarlyBirdController {
   }
 
   private func evaluate() {
-    guard DayflowAuthManager.shared.flowEnabled, AppState.shared.isRecording else {
+    guard DayflowAuthManager.shared.flowEnabled, RecordingState.shared.isRecording else {
       hide()
       return
     }

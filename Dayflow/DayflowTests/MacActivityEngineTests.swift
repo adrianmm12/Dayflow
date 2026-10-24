@@ -326,10 +326,10 @@ final class MacActivityEngineTests: XCTestCase {
   /// subscribed to the recording state) and persist real recording
   /// preferences, so the mutation path is verified by static delegation
   /// (each façade method is a single call to the canonical
-  /// AppState.setRecording mutation) rather than executed here.
+  /// RecordingState.setRecording mutation) rather than executed here.
   func testIsCaptureEnabledMirrorsRecordingControlState() {
     let engine = MacActivityEngine()
 
-    XCTAssertEqual(engine.isCaptureEnabled, AppState.shared.isRecording)
+    XCTAssertEqual(engine.isCaptureEnabled, RecordingState.shared.isRecording)
   }
 }

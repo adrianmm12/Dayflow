@@ -121,10 +121,4 @@ final class RecordingStateTests: XCTestCase {
 
     XCTAssertEqual(received, [false, true, true, false])
   }
-
-  /// Product compatibility: AppState mirrors the shared engine state
-  /// (read-only comparison — no shared state is mutated).
-  func testAppStateMirrorsSharedEngineRecordingState() {
-    XCTAssertEqual(AppState.shared.isRecording, RecordingState.shared.isRecording)
-  }
 }

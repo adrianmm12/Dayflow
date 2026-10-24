@@ -2,17 +2,17 @@
 //  DayflowApp.swift
 //  Dayflow
 //
-//  Headless engine-host entry point. The SwiftUI App scene, menu commands,
-//  and window registration were removed in the headless-host slice: this
-//  target is now a plain AppKit agent process. The engine lifecycle
-//  (recording, analysis, storage, deterministic shutdown) runs entirely
-//  through the existing AppDelegate, which remains authoritative in this
-//  slice. No window, status surface, or menu is created here.
+//  Headless engine-host entry point. No SwiftUI scene, no window, no menu,
+//  no status surface: LSUIElement (Info.plist) plus .accessory activation
+//  policy give the process no normal desktop presence. The engine lifecycle
+//  (recording, analysis, storage, deterministic shutdown) runs through the
+//  headless AppDelegate.
 //
-//  `MainWindowController` and the notification names below are kept because
-//  existing product code (NotificationService, FlowSessionMirror,
-//  StatusBarController) still references them; with no scene registered,
-//  `showMainWindow()` is a harmless no-op pending the next stripping slice.
+//  `MainWindowController` and the notification names below are retained
+//  because still-compiled feature domains (Core/Notifications,
+//  Core/Recording, Core/Flow, System/AnalyticsService) reference them;
+//  with no scene registered, `showMainWindow()` is a harmless no-op pending
+//  those feature-domain deletion slices.
 //
 
 import AppKit
@@ -44,8 +44,8 @@ enum DayflowHeadlessMain {
     // main queue instead.
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)
-    installTerminationRelay(signal: SIGINT, reason: "sigint")
-    installTerminationRelay(signal: SIGTERM, reason: "sigterm")
+    installTerminationRelay(signal: SIGINT)
+    installTerminationRelay(signal: SIGTERM)
 
     let app = NSApplication.shared
     app.delegate = AppDelegate()
@@ -55,14 +55,13 @@ enum DayflowHeadlessMain {
     app.run()
   }
 
-  private static func installTerminationRelay(signal sig: Int32, reason: String) {
+  private static func installTerminationRelay(signal sig: Int32) {
     let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
     source.setEventHandler {
       MainActor.assumeIsolated {
-        // Unblocks AppDelegate.applicationShouldTerminate's soft-quit guard,
-        // then runs the ordinary termination path (engine flush, analytics
-        // finalization, clean exit). Repeated signals are no-ops afterwards.
-        AppDelegate.permitTermination(reason: reason)
+        // applicationShouldTerminate returns .terminateNow for the headless
+        // host, so this runs the ordinary termination path (engine flush,
+        // clean exit). Repeated signals are no-ops afterwards.
         NSApp.terminate(nil)
       }
     }
@@ -74,21 +73,17 @@ enum DayflowHeadlessMain {
 // MARK: - Notification Names
 
 extension Notification.Name {
+  // Referenced by System/AnalyticsService (telemetry preference changes).
   static let analyticsPreferenceChanged = Notification.Name("analyticsPreferenceChanged")
-  static let showWhatsNew = Notification.Name("showWhatsNew")
-  static let showGettingStartedTour = Notification.Name("showGettingStartedTour")
-  static let navigateToDaily = Notification.Name("navigateToDaily")
-  static let navigateToSupport = Notification.Name("navigateToSupport")
-  static let navigateToWeekly = Notification.Name("navigateToWeekly")
+  // Referenced by Core/Recording/TimelineActivitySignal (engine-owned
+  // activity-change signal).
   static let timelineDataUpdated = Notification.Name("timelineDataUpdated")
-  static let showTimelineFailureToast = Notification.Name("showTimelineFailureToast")
-  static let hideTimelineFailureToast = Notification.Name("hideTimelineFailureToast")
+  // Referenced by System/ScreenRecordingPermissionNotice, which engine
+  // capture code (ScreenRecorder) calls on permission failure.
   static let showScreenRecordingPermissionNotice = Notification.Name(
     "showScreenRecordingPermissionNotice")
-  static let openProvidersSettings = Notification.Name("openProvidersSettings")
-  static let openAccountSettings = Notification.Name("openAccountSettings")
+  // Referenced by Core/Flow/FlowSessionMirror (later feature-domain slice).
   static let navigateToFlow = Notification.Name("navigateToFlow")
-  static let navigateToTimeline = Notification.Name("navigateToTimeline")
 }
 
 @MainActor
