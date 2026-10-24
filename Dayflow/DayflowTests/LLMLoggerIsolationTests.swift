@@ -8,8 +8,7 @@ import XCTest
 /// Each logger is constructed with an isolated `StorageManager` rooted at a
 /// unique temporary directory; `StorageManager.shared` is never read or
 /// written. No network, provider, or CLI execution occurs: the logger itself
-/// and one CLI provider's logging wrapper (a pure persistence call) are
-/// exercised directly.
+/// is exercised directly (a pure persistence call).
 ///
 /// Production wiring (verified structurally, not by touching production
 /// storage): `LLMLogger.production` / the no-argument default resolves to
@@ -130,37 +129,5 @@ final class LLMLoggerIsolationTests: XCTestCase {
     XCTAssertEqual(row["error_domain"] as String, "FakeErrorDomain")
     XCTAssertEqual(row["error_code"] as Int, 42)
     XCTAssertEqual(row["error_message"] as String, "fake failure message")
-  }
-
-  // MARK: - Provider wiring (no network, no CLI run)
-
-  /// A CLI provider constructed with an injected logger routes its logging
-  /// wrapper (the `AgentCLISupporting` extension method real CLI call paths
-  /// use) into the injected store. No CLI process runs and no network is
-  /// contacted — only the persistence half executes.
-  ///
-  /// Note: `CodexProvider`'s init performs the production config's
-  /// `ensureWorkingDirectory()` (an idempotent mkdir the hosted app already
-  /// performs); it touches no storage.
-  func testCLIProviderLoggingWrapperUsesInjectedLogger() throws {
-    let storage = makeIsolatedStorage()
-    let provider = CodexProvider(llmLogger: LLMLogger(storage: storage))
-
-    provider.logSuccess(
-      ctx: makeContext(startedAt: Date().addingTimeInterval(-0.5)),
-      finishedAt: Date(),
-      stdout: "fake stdout output",
-      stderr: "",
-      responseHeaders: ["x-usage-output": "7"])
-
-    let rows = llmCallRows(in: storage)
-    XCTAssertEqual(rows.count, 1)
-    let firstRow = try XCTUnwrap(rows.first)
-    let status: String = firstRow["status"]
-    let rowProvider: String = firstRow["provider"]
-    let responseBody: String? = firstRow["response_body"]
-    XCTAssertEqual(status, "success")
-    XCTAssertEqual(rowProvider, "fake-provider")
-    XCTAssertTrue(responseBody?.contains("fake stdout output") == true)
   }
 }

@@ -60,9 +60,6 @@ final class LocalizationTests: XCTestCase {
 
   func testInternalLabelsRemainStableAcrossInterfaceLanguages() {
     XCTAssertEqual(LLMProviderID.local.providerLabel, "local")
-    XCTAssertEqual(DashboardChatProvider.gemini.runtimeLabel, "gemini_function_calling")
-    XCTAssertEqual(DashboardChatTurnRole.user.promptLabel, "User")
-    XCTAssertEqual(DashboardChatTurnRole.assistant.promptLabel, "Assistant")
   }
 
   func testLocalizedInterfaceDoesNotChangeWireTimeParsing() {

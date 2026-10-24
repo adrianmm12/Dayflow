@@ -82,13 +82,7 @@ protocol LLMServicing {
   func processBatch(
     _ batchId: Int64, progressHandler: ((LLMProcessingStep) -> Void)?,
     completion: @escaping (Result<ProcessedBatchResult, Error>) -> Void)
-  func generateText(prompt: String) async throws -> String
-  func generateTextStreaming(prompt: String) -> AsyncThrowingStream<String, Error>
-  /// Rich chat streaming with thinking, tool calls, and text events.
-  /// - Parameter sessionId: Optional session ID to resume a previous conversation
-  func generateChatStreaming(request: DashboardChatRequest) -> AsyncThrowingStream<
-    ChatStreamEvent, Error
-  >
+
   var batchingConfig: BatchingConfig { get }
 }
 
@@ -204,14 +198,11 @@ final class LLMService: LLMServicing {
     }
   }
 
-  private struct TextProviderActions {
-    let generateText: (String) async throws -> (text: String, log: LLMCall)
-    let generateTextStreaming: ((String) -> AsyncThrowingStream<String, Error>)?
-  }
-
   /// One batch provider's execution identity: routing-chosen provider id,
-  /// display label, actions, and (Gemini-only) Gemma fallback bookkeeping.
-  /// Internal (not private) as part of the provider-execution seam surface.
+  /// display label, and actions. Internal (not private) as part of the
+  /// provider-execution seam surface. `fallbackState` is retained (always
+  /// nil in production now that the Gemini/Gemma family is gone) because it
+  /// is part of the seam surface injected fakes construct.
   struct TimelineProviderContext {
     let id: LLMProviderID
     let providerLabel: String
@@ -226,42 +217,6 @@ final class LLMService: LLMServicing {
   /// before the logger became injectable.
   private var llmCallLogger: LLMLogger {
     LLMLogger(storage: storage)
-  }
-
-  private func makeGeminiProvider() -> GeminiDirectProvider? {
-    if let apiKey = KeychainManager.shared.retrieve(for: "gemini"), !apiKey.isEmpty {
-      let preference = GeminiModelPreference.load()
-      return GeminiDirectProvider(apiKey: apiKey, preference: preference, llmLogger: llmCallLogger)
-    } else {
-      print("❌ [LLMService] Failed to retrieve Gemini API key from Keychain")
-      return nil
-    }
-  }
-
-  private func makeGemmaBackupProvider() -> GemmaBackupProvider? {
-    if let apiKey = KeychainManager.shared.retrieve(for: "gemini"), !apiKey.isEmpty {
-      return GemmaBackupProvider(
-        apiKey: apiKey, llmLogger: llmCallLogger, frameStore: frameStore)
-    }
-    print("❌ [LLMService] Failed to retrieve Gemini API key for Gemma fallback")
-    return nil
-  }
-
-  private func makeDayflowProvider(endpoint: String) -> DayflowBackendProvider? {
-    let token = DayflowAuthManager.storedSessionToken()?
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let token, !token.isEmpty else {
-      print("❌ [LLMService] Dayflow provider unavailable: missing session token")
-      return nil
-    }
-    print(
-      "🔐 [LLMService] Dayflow provider ready endpoint=\(endpoint) token_length=\(token.count)"
-    )
-    return DayflowBackendProvider(token: token, endpoint: endpoint, frameStore: frameStore)
-  }
-
-  private func resolvedDayflowEndpoint(savedEndpoint: String?) -> String? {
-    DayflowBackendConfiguration.endpoint(legacySavedEndpoint: savedEndpoint)
   }
 
   private func makeOllamaProvider(endpoint: String) -> OllamaProvider {
@@ -306,71 +261,17 @@ final class LLMService: LLMServicing {
   private func makeBatchProvider(for providerID: LLMProviderID) throws -> (
     actions: BatchProviderActions, fallbackState: GemmaFallbackState?
   ) {
+    // The final pruning pass removed the Gemini (plus Gemma backup),
+    // Dayflow-backend, Codex CLI, and Claude CLI provider implementations.
+    // Their routing IDs remain valid persisted-routing values (see
+    // LLMProviderID/LLMProviderRoutingStore), but selecting one now fails
+    // with the same graceful "no provider configured" error the engine
+    // already handles at startup when nothing is configured. The local
+    // Ollama and OpenAI-compatible paths are the retained inference
+    // transports (localhost llama.cpp today, hosted endpoints later).
     switch providerID {
-    case .gemini:
-      guard let provider = makeGeminiProvider() else { throw noProviderError() }
-      let gemmaProvider = makeGemmaBackupProvider()
-      let fallbackState = GemmaFallbackState()
-
-      return (
-        actions: BatchProviderActions(
-          transcribeScreenshots: { [weak self] screenshots, batchStartTime, batchId in
-            if fallbackState.preferGemma, let gemmaProvider {
-              return try await gemmaProvider.transcribeScreenshots(
-                screenshots, batchStartTime: batchStartTime, batchId: batchId)
-            }
-
-            do {
-              return try await provider.transcribeScreenshots(
-                screenshots, batchStartTime: batchStartTime, batchId: batchId)
-            } catch {
-              guard let gemmaProvider else { throw error }
-              fallbackState.preferGemma = true
-              self?.logGemmaFallback(operation: "transcribe", error: error, batchId: batchId)
-              return try await gemmaProvider.transcribeScreenshots(
-                screenshots, batchStartTime: batchStartTime, batchId: batchId)
-            }
-          },
-          generateActivityCards: Self.rewritingWholeWindow {
-            [weak self] observations, context, batchId in
-            if fallbackState.preferGemma, let gemmaProvider {
-              fallbackState.usedGemmaForCardGeneration = true
-              return try await gemmaProvider.generateActivityCards(
-                observations: observations, context: context, batchId: batchId)
-            }
-
-            do {
-              return try await provider.generateActivityCards(
-                observations: observations, context: context, batchId: batchId)
-            } catch {
-              guard let gemmaProvider else { throw error }
-              fallbackState.preferGemma = true
-              fallbackState.usedGemmaForCardGeneration = true
-              self?.logGemmaFallback(operation: "generate_cards", error: error, batchId: batchId)
-              return try await gemmaProvider.generateActivityCards(
-                observations: observations, context: context, batchId: batchId)
-            }
-          }
-        ), fallbackState: fallbackState
-      )
-    case .dayflow:
-      let savedEndpoint = DayflowEndpointPreferences.load()
-      guard let endpoint = resolvedDayflowEndpoint(savedEndpoint: savedEndpoint) else {
-        throw noProviderError()
-      }
-      guard let provider = makeDayflowProvider(endpoint: endpoint) else { throw noProviderError() }
-      return (
-        actions: BatchProviderActions(
-          transcribeScreenshots: provider.transcribeScreenshots,
-          generateActivityCards: Self.rewritingWholeWindow(provider.generateActivityCards),
-          // The backend is shown every card in the window, like rewritingWholeWindow providers.
-          generateTimeline: { screenshots, context, batchId in
-            let result = try await provider.generateTimeline(
-              screenshots: screenshots, context: context, batchId: batchId)
-            return (result.cards, result.observations, nil, result.log)
-          }
-        ), fallbackState: nil
-      )
+    case .gemini, .dayflow, .chatGPT, .claude:
+      throw noProviderError()
     case .local:
       let provider = makeOllamaProvider(endpoint: localProviderEndpoint())
       return (
@@ -385,24 +286,6 @@ final class LLMService: LLMServicing {
         actions: BatchProviderActions(
           transcribeScreenshots: provider.transcribeScreenshots,
           generateActivityCards: Self.rewritingWholeWindow(provider.generateActivityCards)
-        ), fallbackState: nil
-      )
-    case .chatGPT:
-      let provider = CodexProvider(llmLogger: llmCallLogger, frameStore: frameStore)
-      return (
-        actions: BatchProviderActions(
-          transcribeScreenshots: provider.transcribeScreenshots,
-          generateActivityCards: Self.rewritingWholeWindow(provider.generateActivityCards),
-          generateTimeline: provider.generateTimeline
-        ), fallbackState: nil
-      )
-    case .claude:
-      let provider = ClaudeProvider(llmLogger: llmCallLogger, frameStore: frameStore)
-      return (
-        actions: BatchProviderActions(
-          transcribeScreenshots: provider.transcribeScreenshots,
-          generateActivityCards: provider.generateActivityCards,
-          generateTimeline: provider.generateTimeline
         ), fallbackState: nil
       )
     }
@@ -441,28 +324,13 @@ final class LLMService: LLMServicing {
     return secondary
   }
 
-  /// Gemini's in-batch Gemma fallback bookkeeping. Internal (not private) as
-  /// part of the provider-execution seam surface (fakes pass nil).
+  /// Gemini's former in-batch Gemma fallback bookkeeping. The Gemini/Gemma
+  /// provider family was deleted in the final pruning pass; the type remains
+  /// (always nil from production) as part of the provider-execution seam
+  /// surface that injected fakes construct.
   final class GemmaFallbackState {
     var preferGemma = false
     var usedGemmaForCardGeneration = false
-  }
-
-  private func logGemmaFallback(operation: String, error: Error, batchId: Int64?) {
-    let nsError = error as NSError
-    AnalyticsService.shared.capture(
-      "llm_fallback_used",
-      [
-        "provider": "gemini",
-        "provider_id": LLMProviderID.gemini.rawValue,
-        "provider_label": "gemini",
-        "fallback_provider": "gemma",
-        "fallback_provider_label": "gemma",
-        "operation": operation,
-        "error_domain": nsError.domain,
-        "error_code": nsError.code,
-        "batch_id": batchId as Any,
-      ])
   }
 
   private func fallbackProps(
@@ -635,90 +503,6 @@ final class LLMService: LLMServicing {
       defaults.set(
         lastShownDayByKind, forKey: Self.timelineFailureToastLastShownDayByKindDefaultsKey)
       return true
-    }
-  }
-
-  private func makeTextProvider() throws -> TextProviderActions {
-    let providerID = try LLMProviderRoutingStore.load().primary
-    switch providerID {
-    case .gemini:
-      guard let provider = makeGeminiProvider() else { throw noProviderError() }
-      return TextProviderActions(
-        generateText: { prompt in
-          try await provider.generateText(prompt: prompt)
-        },
-        generateTextStreaming: nil
-      )
-    case .dayflow:
-      guard
-        let resolvedEndpoint = resolvedDayflowEndpoint(
-          savedEndpoint: DayflowEndpointPreferences.load())
-      else {
-        throw noProviderError()
-      }
-      guard let provider = makeDayflowProvider(endpoint: resolvedEndpoint) else {
-        throw noProviderError()
-      }
-      return TextProviderActions(
-        generateText: { prompt in
-          try await provider.generateText(prompt: prompt)
-        },
-        generateTextStreaming: nil
-      )
-    case .local:
-      let provider = makeOllamaProvider(endpoint: localProviderEndpoint())
-      return TextProviderActions(
-        generateText: { prompt in
-          try await provider.generateText(prompt: prompt)
-        },
-        generateTextStreaming: nil
-      )
-    case .openAICompatible:
-      guard let provider = makeOpenAICompatibleProvider() else { throw noProviderError() }
-      return TextProviderActions(
-        generateText: { prompt in
-          try await provider.generateText(prompt: prompt)
-        },
-        generateTextStreaming: nil
-      )
-    case .chatGPT:
-      let provider = CodexProvider(llmLogger: llmCallLogger)
-      return TextProviderActions(
-        generateText: { prompt in
-          try await provider.generateText(prompt: prompt)
-        },
-        generateTextStreaming: provider.generateTextStreaming
-      )
-    case .claude:
-      let provider = ClaudeProvider(llmLogger: llmCallLogger)
-      return TextProviderActions(
-        generateText: { prompt in
-          try await provider.generateText(prompt: prompt)
-        },
-        generateTextStreaming: provider.generateTextStreaming
-      )
-    }
-  }
-
-  private func makeFallbackTextStream(_ work: @escaping () async throws -> String)
-    -> AsyncThrowingStream<String, Error>
-  {
-    AsyncThrowingStream { continuation in
-      Task {
-        do {
-          let text = try await work()
-          continuation.yield(text)
-          continuation.finish()
-        } catch {
-          continuation.finish(throwing: error)
-        }
-      }
-    }
-  }
-
-  private func makeErrorStream(_ error: Error) -> AsyncThrowingStream<String, Error> {
-    AsyncThrowingStream { continuation in
-      continuation.finish(throwing: error)
     }
   }
 
@@ -1251,63 +1035,5 @@ final class LLMService: LLMServicing {
     )
   }
 
-  // MARK: - Text Generation
-
-  func generateText(prompt: String) async throws -> String {
-    let textProvider = try makeTextProvider()
-    let (text, _) = try await textProvider.generateText(prompt)
-    return text
-  }
-
-  // MARK: - Streaming Text Generation
-
-  func generateTextStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
-    do {
-      let textProvider = try makeTextProvider()
-      if let streaming = textProvider.generateTextStreaming {
-        return streaming(prompt)
-      }
-      return makeFallbackTextStream { try await textProvider.generateText(prompt).text }
-    } catch {
-      return makeErrorStream(error)
-    }
-  }
-
-  // MARK: - Rich Chat Streaming
-
-  func generateChatStreaming(request: DashboardChatRequest) -> AsyncThrowingStream<
-    ChatStreamEvent, Error
-  > {
-    switch request.provider {
-    case .gemini:
-      guard let gemini = makeGeminiProvider() else {
-        return AsyncThrowingStream { continuation in
-          continuation.yield(
-            .error("Gemini is not configured. Add your Gemini API key in Settings > Providers."))
-          continuation.finish(
-            throwing: NSError(
-              domain: "LLMService",
-              code: 1101,
-              userInfo: [
-                NSLocalizedDescriptionKey:
-                  "Gemini is not configured. Add your Gemini API key in Settings > Providers."
-              ]))
-        }
-      }
-      return gemini.generateDashboardChatStreaming(
-        systemInstruction: request.systemInstruction ?? "",
-        history: request.history
-      )
-    case .codex:
-      return CodexProvider(llmLogger: llmCallLogger).generateChatStreaming(
-        prompt: request.prompt,
-        sessionId: request.sessionId
-      )
-    case .claude:
-      return ClaudeProvider(llmLogger: llmCallLogger).generateChatStreaming(
-        prompt: request.prompt,
-        sessionId: request.sessionId
-      )
-    }
-  }
+  // MARK: - End of service
 }

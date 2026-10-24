@@ -1,28 +1,17 @@
-import AppKit
-import Darwin
+//
+//  ChatCLIJSONLEvents.swift
+//  Dayflow
+//
+//  Wire-format DTOs for the codex/claude CLI JSONL streaming output the
+//  retained ChatCLIProcessRunner parses (used by the retained Flow feature
+//  domain's streaming conversations).
+//
+//  Extracted verbatim from the retired ChatCLIConfigManager.swift during the
+//  final provider pruning pass; only the config-manager half of that file
+//  was orphaned.
+//
+
 import Foundation
-
-// MARK: - Config Manager
-
-struct ChatCLIConfigManager {
-  static let shared = ChatCLIConfigManager()
-
-  let workingDirectory: URL
-
-  init() {
-    let appSupport = FileManager.default.urls(
-      for: .applicationSupportDirectory, in: .userDomainMask
-    ).first!
-    workingDirectory = appSupport.appendingPathComponent("Dayflow/chatcli", isDirectory: true)
-  }
-
-  func ensureWorkingDirectory() {
-    let fm = FileManager.default
-    if !fm.fileExists(atPath: workingDirectory.path) {
-      try? fm.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
-    }
-  }
-}
 
 // MARK: - JSONL Event Types
 

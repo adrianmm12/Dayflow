@@ -19,11 +19,7 @@ struct DailyRecapProviderAvailability: Equatable, Sendable {
 enum DailyRecapGeneratorError: LocalizedError {
   case emptyCards(day: String)
   case noProviderSelected
-  case missingDayflowAuthToken
   case missingLocalConfiguration
-  case missingGeminiAPIKey
-  case missingCodexCLI
-  case missingClaudeCLI
   case emptyGeneratedContent(day: String)
   case invalidJSONResponse(rawResponse: String)
   case invalidResponseShape(rawResponse: String)
@@ -38,20 +34,12 @@ enum DailyRecapGeneratorError: LocalizedError {
           localized:
             "No Daily provider is selected. Choose one from the gear button above to turn Daily generation back on."
         )
-    case .missingDayflowAuthToken:
-      return String(localized: "Dayflow backend auth token is unavailable.")
     case .missingLocalConfiguration:
       return
         String(
           localized:
             "Local Daily generation is not configured. Set up Ollama or LM Studio, or pick a different provider."
         )
-    case .missingGeminiAPIKey:
-      return String(localized: "Gemini API key is missing.")
-    case .missingCodexCLI:
-      return String(localized: "Codex CLI is not installed.")
-    case .missingClaudeCLI:
-      return String(localized: "Claude Code is not installed.")
     case .emptyGeneratedContent(let day):
       return String(localized: "Daily generation returned no usable items for \(day).")
     case .invalidJSONResponse(let rawResponse):
@@ -194,42 +182,15 @@ final class DailyRecapGenerator {
   }
 
   func availabilitySnapshot() -> [DailyRecapProvider: DailyRecapProviderAvailability] {
-    let geminiKey =
-      KeychainManager.shared.retrieve(for: "gemini")?
-      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    let codexInstalled = LoginShellRunner.isInstalled("codex")
-    let claudeInstalled = LoginShellRunner.isInstalled("claude")
     let isLocalConfigured = localProviderIsConfigured()
     let localModel = DailyRecapProvider.local.modelOrTool
 
     return [
-      .dayflow: DailyRecapProviderAvailability(
-        isAvailable: true,
-        detail: DailyRecapProvider.dayflow.pickerSubtitle
-      ),
       .local: DailyRecapProviderAvailability(
         isAvailable: isLocalConfigured,
         detail: isLocalConfigured
           ? (localModel ?? DailyRecapProvider.local.pickerSubtitle)
           : "Configure Ollama or LM Studio before using this provider"
-      ),
-      .gemini: DailyRecapProviderAvailability(
-        isAvailable: !geminiKey.isEmpty,
-        detail: geminiKey.isEmpty
-          ? "Add a Gemini API key before using this provider"
-          : DailyRecapProvider.gemini.pickerSubtitle
-      ),
-      .chatgpt: DailyRecapProviderAvailability(
-        isAvailable: codexInstalled,
-        detail: codexInstalled
-          ? DailyRecapProvider.chatgpt.pickerSubtitle
-          : "Install Codex CLI before using this provider"
-      ),
-      .claude: DailyRecapProviderAvailability(
-        isAvailable: claudeInstalled,
-        detail: claudeInstalled
-          ? DailyRecapProvider.claude.pickerSubtitle
-          : "Install Claude Code before using this provider"
       ),
       .none: DailyRecapProviderAvailability(
         isAvailable: true,
@@ -249,18 +210,16 @@ final class DailyRecapGenerator {
       sourceDay: context.sourceDayString
     )
 
+    // The Dayflow-backend, Gemini, Codex CLI, and Claude CLI recap paths were
+    // removed with their provider families in the final pruning pass. Those
+    // enum cases remain decodable persisted-selection values; selecting one
+    // now reports "no provider selected", which the scheduler already
+    // handles. Local (Ollama / OpenAI-compatible local server) is the
+    // retained recap path.
     switch provider {
-    case .dayflow:
-      return try await generateWithDayflow(context: context, metadata: metadata)
     case .local:
       return try await generateWithLocal(context: context, metadata: metadata)
-    case .gemini:
-      return try await generateWithGemini(context: context, metadata: metadata)
-    case .chatgpt:
-      return try await generateWithChatGPT(context: context, metadata: metadata)
-    case .claude:
-      return try await generateWithClaude(context: context, metadata: metadata)
-    case .none:
+    case .dayflow, .gemini, .chatgpt, .claude, .none:
       throw DailyRecapGeneratorError.noProviderSelected
     }
   }
@@ -353,76 +312,6 @@ final class DailyRecapGenerator {
     return jsonString
   }
 
-  private func generateWithDayflow(
-    context: DailyRecapGenerationContext,
-    metadata: DailyStandupGenerationMetadata
-  ) async throws -> DailyStandupDraft {
-    guard let provider = makeDayflowProvider() else {
-      throw DailyRecapGeneratorError.missingDayflowAuthToken
-    }
-
-    let request = DayflowDailyGenerationRequest(
-      day: context.sourceDayString,
-      cardsText: Self.makeCardsText(day: context.sourceDayString, cards: context.cards),
-      observationsText: Self.makeObservationsText(
-        day: context.sourceDayString,
-        observations: context.observations
-      ),
-      priorDailyText: Self.makePriorDailyText(entries: context.priorEntries),
-      preferencesText: Self.makePreferencesText(
-        highlightsTitle: context.highlightsTitle,
-        tasksTitle: context.tasksTitle,
-        blockersTitle: context.blockersTitle
-      ),
-      preferredOutputLanguage: Self.preferredOutputLanguage()
-    )
-
-    let response = try await provider.generateDaily(request)
-    guard !response.highlights.isEmpty || !response.unfinished.isEmpty || !response.blockers.isEmpty
-    else {
-      throw DailyRecapGeneratorError.emptyGeneratedContent(day: context.sourceDayString)
-    }
-
-    let draft = DailyStandupDraft(
-      highlightsTitle: context.highlightsTitle,
-      highlights: Self.normalizedBulletItems(from: response.highlights),
-      tasksTitle: context.tasksTitle,
-      tasks: Self.normalizedBulletItems(from: response.unfinished),
-      blockersTitle: context.blockersTitle,
-      blockersBody: Self.normalizedBlockersText(from: response.blockers),
-      generation: metadata
-    )
-    guard draft.hasGeneratedContent else {
-      throw DailyRecapGeneratorError.emptyGeneratedContent(day: context.sourceDayString)
-    }
-    return draft
-  }
-
-  private func generateWithGemini(
-    context: DailyRecapGenerationContext,
-    metadata: DailyStandupGenerationMetadata
-  ) async throws -> DailyStandupDraft {
-    guard
-      let apiKey = KeychainManager.shared.retrieve(for: "gemini")?
-        .trimmingCharacters(in: .whitespacesAndNewlines),
-      !apiKey.isEmpty
-    else {
-      throw DailyRecapGeneratorError.missingGeminiAPIKey
-    }
-
-    let provider = GeminiDirectProvider(
-      apiKey: apiKey,
-      preference: .default
-    )
-    let prompt = Self.makeLocalPrompt(day: context.sourceDayString, cards: context.cards)
-    let (rawText, _) = try await provider.generateText(
-      prompt: prompt,
-      maxOutputTokens: Self.localRecapMaxOutputTokens
-    )
-    let parsed = try Self.parseLocalResponse(rawText)
-    return try makeDraft(from: parsed, context: context, metadata: metadata)
-  }
-
   private func generateWithLocal(
     context: DailyRecapGenerationContext,
     metadata: DailyStandupGenerationMetadata
@@ -438,84 +327,6 @@ final class DailyRecapGenerator {
     )
     let parsed = try Self.parseLocalResponse(rawText)
     return try makeDraft(from: parsed, context: context, metadata: metadata)
-  }
-
-  private func generateWithChatGPT(
-    context: DailyRecapGenerationContext,
-    metadata: DailyStandupGenerationMetadata
-  ) async throws -> DailyStandupDraft {
-    guard LoginShellRunner.isInstalled("codex") else {
-      throw DailyRecapGeneratorError.missingCodexCLI
-    }
-
-    let provider = CodexProvider()
-    let prompt = Self.makeLocalPrompt(
-      day: context.sourceDayString, cards: context.cards, provider: .chatgpt)
-    func generate(model: String) async throws -> DailyStandupDraft {
-      try Task.checkCancellation()
-      let (rawText, _) = try await provider.generateText(
-        prompt: prompt,
-        model: model,
-        reasoningEffort: "low",
-        disableTools: true
-      )
-      try Task.checkCancellation()
-      let parsed = try Self.parseLocalResponse(rawText)
-      var actualMetadata = metadata
-      actualMetadata.modelOrTool = model
-      return try makeDraft(from: parsed, context: context, metadata: actualMetadata)
-    }
-
-    do {
-      return try await generate(model: "gpt-6.1-sol")
-    } catch {
-      if error is CancellationError { throw error }
-      try Task.checkCancellation()
-      AnalyticsService.shared.capture(
-        "llm_model_fallback",
-        [
-          "provider": "chat_cli",
-          "provider_id": LLMProviderID.chatGPT.rawValue,
-          "operation": "daily_recap",
-          "from_model": "gpt-6.1-sol",
-          "to_model": "gpt-5.6-sol",
-          "reason": "generation_failed",
-        ])
-      return try await generate(model: "gpt-5.6-sol")
-    }
-  }
-
-  private func generateWithClaude(
-    context: DailyRecapGenerationContext,
-    metadata: DailyStandupGenerationMetadata
-  ) async throws -> DailyStandupDraft {
-    guard LoginShellRunner.isInstalled("claude") else {
-      throw DailyRecapGeneratorError.missingClaudeCLI
-    }
-
-    let provider = ClaudeProvider()
-    let prompt = Self.makeLocalPrompt(
-      day: context.sourceDayString, cards: context.cards, provider: .claude)
-    let (rawText, _) = try await provider.generateText(
-      prompt: prompt,
-      model: "opus",
-      reasoningEffort: nil,
-      disableTools: true
-    )
-    let parsed = try Self.parseLocalResponse(rawText)
-    return try makeDraft(from: parsed, context: context, metadata: metadata)
-  }
-
-  private func makeDayflowProvider() -> DayflowBackendProvider? {
-    // Daily intentionally uses the legacy PostHog distinct-id token contract.
-    // CardGen uses DayflowAuthManager session tokens, but Daily should not
-    // move to account-session auth without an explicit app migration.
-    let token = AnalyticsService.shared.backendAuthToken()
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !token.isEmpty else { return nil }
-
-    guard let endpoint = resolvedDayflowEndpoint() else { return nil }
-    return DayflowBackendProvider(token: token, endpoint: endpoint)
   }
 
   private func makeLocalProvider() -> OllamaProvider? {
@@ -547,13 +358,6 @@ final class DailyRecapGenerator {
       defaults.string(forKey: "llmLocalModelId")?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     return !baseURL.isEmpty && !modelId.isEmpty
-  }
-
-  private func resolvedDayflowEndpoint() -> String? {
-    _ = try? LLMProviderRoutingStore.load()
-    return DayflowBackendConfiguration.endpoint(
-      legacySavedEndpoint: DayflowEndpointPreferences.load()
-    )
   }
 
   private func makeDraft(

@@ -84,20 +84,6 @@ private final class FakeLLMService: LLMServicing, @unchecked Sendable {
       completion(immediateResult)
     }
   }
-
-  func generateText(prompt: String) async throws -> String {
-    fatalError("FakeLLMService: generateText is not used by AnalysisManager")
-  }
-
-  func generateTextStreaming(prompt: String) -> AsyncThrowingStream<String, Error> {
-    fatalError("FakeLLMService: generateTextStreaming is not used by AnalysisManager")
-  }
-
-  func generateChatStreaming(request: DashboardChatRequest) -> AsyncThrowingStream<
-    ChatStreamEvent, Error
-  > {
-    fatalError("FakeLLMService: generateChatStreaming is not used by AnalysisManager")
-  }
 }
 
 final class AnalysisManagerInjectedLLMTests: XCTestCase {

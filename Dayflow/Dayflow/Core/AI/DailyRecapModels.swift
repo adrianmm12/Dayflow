@@ -87,7 +87,7 @@ enum DailyRecapProvider: String, Codable, CaseIterable, Sendable {
     case .local:
       return String(localized: "Local")
     case .gemini:
-      return GeminiModelPreference.default.primary.displayName
+      return String(localized: "Gemini")
     case .chatgpt:
       return String(localized: "GPT-6 Astra")
     case .claude:
@@ -105,7 +105,7 @@ enum DailyRecapProvider: String, Codable, CaseIterable, Sendable {
       return String(
         localized: "Uses Ollama, LM Studio, or another local-compatible server on this Mac.")
     case .gemini:
-      return GeminiModelPreference.default.primary.displayName
+      return String(localized: "Gemini")
     case .chatgpt:
       return String(localized: "GPT-6 Astra")
     case .claude:
@@ -137,7 +137,7 @@ enum DailyRecapProvider: String, Codable, CaseIterable, Sendable {
     case .local:
       return Self.currentLocalModelID()
     case .gemini:
-      return GeminiModelPreference.default.primary.rawValue
+      return "gemini"
     case .chatgpt:
       return "gpt-6-astra"
     case .claude:
@@ -211,8 +211,7 @@ struct DailyStandupGenerationMetadata: Codable, Equatable, Sendable {
     case .local:
       return modelOrTool ?? String(localized: "Local")
     case .gemini:
-      return modelOrTool.flatMap(GeminiModel.init(rawValue:))?.displayName
-        ?? modelOrTool ?? String(localized: "Gemini")
+      return modelOrTool ?? String(localized: "Gemini")
     case .chatgpt:
       return modelOrTool == "gpt-5.6-sol"
         ? String(localized: "GPT-5.6 Sol") : String(localized: "GPT-6 Astra")
