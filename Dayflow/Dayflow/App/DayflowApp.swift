@@ -8,11 +8,11 @@
 //  (recording, analysis, storage, deterministic shutdown) runs through the
 //  headless AppDelegate.
 //
-//  `MainWindowController` and the notification names below are retained
-//  because still-compiled feature domains (Core/Notifications,
-//  Core/Recording, Core/Flow, System/AnalyticsService) reference them;
+//  `MainWindowController` and the `navigateToFlow` notification name are
+//  retained because the still-compiled Core/Flow feature domain (retained
+//  temporarily for its behavioral-inference techniques) references them;
 //  with no scene registered, `showMainWindow()` is a harmless no-op pending
-//  those feature-domain deletion slices.
+//  the Flow feature-domain deletion slice.
 //
 
 import AppKit

@@ -158,8 +158,9 @@ enum GitHubStarPrompt {
 // MARK: - GitHub star prompt state
 //
 // Moved verbatim from the presentation layer (Views/UI/GitHubStarPromptCard.swift).
-// Core/Surveys/SurveyCenter reads `lastShownAt` so surveys stay off the same
-// day as the star card; the state itself is just UserDefaults bookkeeping.
+// The in-app survey system (Core/Surveys) once read `lastShownAt` so surveys
+// stayed off the same day as the star card; it was deleted in a later
+// stripping slice. The state itself is just UserDefaults bookkeeping.
 
 enum GitHubStarPromptState {
   static let repositoryURL = URL(string: "https://github.com/jerryzliu/Dayflow")!

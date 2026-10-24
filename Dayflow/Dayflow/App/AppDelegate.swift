@@ -21,22 +21,6 @@ import AppKit
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
-  enum PendingNotificationNavigationDestination: Equatable {
-    case daily(day: String?)
-    case weekly
-    case support
-    case flow
-    case timeline
-  }
-
-  // Dormant product-notification routing surface: NotificationService
-  // (Core/Notifications, scheduled for a later feature-domain slice) still
-  // writes this when the user taps a product notification. No host code
-  // reads it anymore; retained temporarily to avoid Core/Notifications
-  // surgery in this slice.
-  static var pendingNotificationNavigationDestination: PendingNotificationNavigationDestination? =
-    nil
-
   private var activityEngine: MacActivityEngine!
 
   override init() {

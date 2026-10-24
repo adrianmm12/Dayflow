@@ -275,9 +275,9 @@ final class DailyRecapScheduler: @unchecked Sendable {
           uniquingKeysWith: { _, new in new }
         ))
 
-      await MainActor.run {
-        NotificationService.shared.scheduleDailyRecapReadyNotification(forDay: targetDay)
-      }
+      // The product-notification fan-out (Core/Notifications) was deleted with
+      // the headless stripping slices; generation success is fully recorded
+      // by the analytics capture above.
     } catch {
       let nsError = error as NSError
       AnalyticsService.shared.capture(
