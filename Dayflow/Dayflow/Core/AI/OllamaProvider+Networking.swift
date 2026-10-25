@@ -87,10 +87,14 @@ extension OllamaProvider {
       var didLogTiming = false
       var apiStart: Date?
       do {
-        let urlRequest = try makeChatURLRequest(request, url: url)
-
         let start = Date()
         apiStart = start
+        // The transport builds and sends the wire request(s) for this logical
+        // call and reports the primary exchange for logging.
+        let result = try await transport.execute(
+          self, request: request, timeoutInterval: callTimeoutInterval)
+        let urlRequest = result.requestForLogging
+
         let requestBodyForLogging: Data?
         if operation == "describe_frame" {
           // Don't persist raw base64 image payloads to the LLM call log (SQLite)
@@ -102,7 +106,7 @@ extension OllamaProvider {
           batchId: batchId,
           callGroupId: callGroupId,
           attempt: attempt + 1,
-          provider: localEngine,  // Track actual engine: ollama, lmstudio, or custom
+          provider: localEngine,  // Track actual engine: ollama, lmstudio, llmserver, ...
           providerID: providerID.rawValue,
           model: request.model,
           operation: operation,
@@ -113,35 +117,23 @@ extension OllamaProvider {
           startedAt: start
         )
         ctxForAttempt = ctx
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+
         let requestDuration = Date().timeIntervalSince(start)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode
+        let statusCode = result.statusCode
         logCallDuration(operation: operation, duration: requestDuration, status: statusCode)
         didLogTiming = true
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-          throw NSError(
-            domain: "OllamaProvider", code: 4,
-            userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-        }
-
-        guard httpResponse.statusCode == 200 else {
-          let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+        guard statusCode == 200 else {
+          let errorBody = String(data: result.data, encoding: .utf8) ?? "Unknown error"
           // Log failure with response body via centralized logger
-          let responseHeaders: [String: String] = httpResponse.allHeaderFields.reduce(into: [:]) {
-            acc, kv in
-            if let k = kv.key as? String, let v = kv.value as? CustomStringConvertible {
-              acc[k] = v.description
-            }
-          }
           llmLogger.logFailure(
             ctx: ctx,
             http: LLMHTTPInfo(
-              httpStatus: httpResponse.statusCode, responseHeaders: responseHeaders,
-              responseBody: data),
+              httpStatus: statusCode, responseHeaders: result.responseHeaders,
+              responseBody: result.data),
             finishedAt: Date(),
             errorDomain: "OllamaProvider",
-            errorCode: httpResponse.statusCode,
+            errorCode: statusCode,
             errorMessage: errorBody
           )
           didLogFailureThisAttempt = true
@@ -149,40 +141,28 @@ extension OllamaProvider {
             domain: "OllamaProvider", code: 4,
             userInfo: [
               NSLocalizedDescriptionKey:
-                "Ollama API request failed with status \(httpResponse.statusCode): \(errorBody)"
+                "Ollama API request failed with status \(statusCode): \(errorBody)"
             ])
         }
 
         do {
-          let chatResponse = try JSONDecoder().decode(ChatResponse.self, from: data)
+          let chatResponse = try JSONDecoder().decode(ChatResponse.self, from: result.data)
           // Centralized success log
-          let responseHeaders: [String: String] = httpResponse.allHeaderFields.reduce(into: [:]) {
-            acc, kv in
-            if let k = kv.key as? String, let v = kv.value as? CustomStringConvertible {
-              acc[k] = v.description
-            }
-          }
           llmLogger.logSuccess(
             ctx: ctx,
             http: LLMHTTPInfo(
-              httpStatus: httpResponse.statusCode, responseHeaders: responseHeaders,
-              responseBody: data),
+              httpStatus: statusCode, responseHeaders: result.responseHeaders,
+              responseBody: result.data),
             finishedAt: Date()
           )
           return chatResponse
         } catch {
           // Centralized parse failure
-          let responseHeaders: [String: String] = httpResponse.allHeaderFields.reduce(into: [:]) {
-            acc, kv in
-            if let k = kv.key as? String, let v = kv.value as? CustomStringConvertible {
-              acc[k] = v.description
-            }
-          }
           llmLogger.logFailure(
             ctx: ctx,
             http: LLMHTTPInfo(
-              httpStatus: httpResponse.statusCode, responseHeaders: responseHeaders,
-              responseBody: data),
+              httpStatus: statusCode, responseHeaders: result.responseHeaders,
+              responseBody: result.data),
             finishedAt: Date(),
             errorDomain: (error as NSError).domain,
             errorCode: (error as NSError).code,
@@ -199,7 +179,10 @@ extension OllamaProvider {
           logCallDuration(operation: operation, duration: requestDuration, status: nil)
           didLogTiming = true
         }
-        print("[OLLAMA] Request failed (attempt \(attempt + 1)/\(attempts)): \(error)")
+        // Log (and print) the underlying error for transport-level failures:
+        // the wrapper carries no diagnostic text of its own.
+        let loggedError = (error as? LLMTransportError)?.underlying ?? error
+        print("[OLLAMA] Request failed (attempt \(attempt + 1)/\(attempts)): \(loggedError)")
 
         // If it's not the last attempt, wait before retrying
         if attempt < attempts - 1 {
@@ -214,13 +197,33 @@ extension OllamaProvider {
           } else {
             fallbackBodyForLogging = try? JSONEncoder().encode(request)
           }
-          let ctx =
-            ctxForAttempt
-            ?? LLMCallContext(
+          let transportLoggingRequest = (error as? LLMTransportError)?.requestForLogging
+          let ctx: LLMCallContext
+          if let ctxForAttempt {
+            ctx = ctxForAttempt
+          } else if let loggingRequest = transportLoggingRequest {
+            ctx = LLMCallContext(
               batchId: batchId,
               callGroupId: callGroupId,
               attempt: attempt + 1,
-              provider: localEngine,  // Track actual engine: ollama, lmstudio, or custom
+              provider: localEngine,
+              providerID: providerID.rawValue,
+              model: request.model,
+              operation: operation,
+              requestMethod: loggingRequest.httpMethod ?? "POST",
+              requestURL: loggingRequest.url,
+              requestHeaders: loggingRequest.allHTTPHeaderFields,
+              requestBody:
+                operation == "describe_frame"
+                ? nil : (loggingRequest.httpBody ?? fallbackBodyForLogging),
+              startedAt: apiStart ?? Date()
+            )
+          } else {
+            ctx = LLMCallContext(
+              batchId: batchId,
+              callGroupId: callGroupId,
+              attempt: attempt + 1,
+              provider: localEngine,  // Track actual engine: ollama, lmstudio, llmserver, ...
               providerID: providerID.rawValue,
               model: request.model,
               operation: operation,
@@ -230,17 +233,27 @@ extension OllamaProvider {
               requestBody: fallbackBodyForLogging,
               startedAt: Date()
             )
+          }
           llmLogger.logFailure(
             ctx: ctx,
             http: nil,
             finishedAt: Date(),
-            errorDomain: (error as NSError).domain,
-            errorCode: (error as NSError).code,
-            errorMessage: (error as NSError).localizedDescription
+            errorDomain: (loggedError as NSError).domain,
+            errorCode: (loggedError as NSError).code,
+            errorMessage: (loggedError as NSError).localizedDescription
           )
           didLogFailureThisAttempt = true
         }
       }
+    }
+
+    // Unwrap transport-level failures so callers see the underlying error
+    // (domain, code, localizedDescription) exactly as they did before the
+    // transport seam: classification, retry-feedback prompts, and logged
+    // error messages all read the real diagnostic text. The wrapper's
+    // request info was already consumed for failure logging above.
+    if let transportError = lastError as? LLMTransportError {
+      throw transportError.underlying
     }
 
     throw lastError

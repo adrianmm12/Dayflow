@@ -54,8 +54,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // extra SCShareableContent probe: every ScreenCaptureKit call makes
     // macOS re-check the grant (issue #381), and the recorder retries with
     // backoff if capture really can't begin.
+    //
+    // When the grant is missing, request it once: CGRequestScreenCaptureAccess
+    // surfaces the system prompt (the preflight never does), and a headless
+    // launch would otherwise never show it — the capture gate below prevents
+    // the ScreenCaptureKit call that would. Granting in the dialog lets this
+    // same launch proceed to recording; denying leaves the run idle with the
+    // preference intact. Already-granted and previously-denied states return
+    // immediately without prompting, so this is a no-op on every later launch.
     Task { @MainActor in
-      guard ScreenRecordingPermissionNotice.isGranted else {
+      if !ScreenRecordingPermissionNotice.isGranted
+        && !ScreenRecordingPermissionNotice.requestAccess()
+      {
         RecordingState.shared.setRecording(
           false, analyticsReason: "auto", persistPreference: false)
         return

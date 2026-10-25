@@ -54,6 +54,8 @@ enum DailyRecapProvider: String, Codable, CaseIterable, Sendable {
       return .claude
     case .local:
       return .local
+    case .llmServer:
+      return .local
     case .openAICompatible:
       return .none
     }
@@ -156,6 +158,13 @@ enum DailyRecapProvider: String, Codable, CaseIterable, Sendable {
   }
 
   private static func currentLocalModelID(from defaults: UserDefaults = .standard) -> String? {
+    if LLMServerPreferences.isRoutedPrimary(from: defaults),
+      let configuration = LLMServerPreferences.load(from: defaults),
+      configuration.isComplete
+    {
+      return configuration.modelPath
+    }
+
     let trimmed = defaults.string(forKey: "llmLocalModelId")?
       .trimmingCharacters(in: .whitespacesAndNewlines)
     if let trimmed, !trimmed.isEmpty {

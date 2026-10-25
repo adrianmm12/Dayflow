@@ -9,6 +9,14 @@ import Foundation
 final class OllamaProvider {
   let endpoint: String
   private let injectedRuntimeConfiguration: OpenAICompatibleRuntimeConfiguration?
+  /// Non-nil when this provider speaks the custom llmserver wire protocol
+  /// instead of OpenAI chat completions.
+  private let llmServerConfiguration: LLMServerConfiguration?
+  /// Wire transport executing one logical LLM call; defaults to the original
+  /// chat-completions HTTP path.
+  let transport: LocalLLMTransport
+  /// Per-attempt HTTP timeout for the transport's primary request.
+  let callTimeoutInterval: TimeInterval
   /// Destination for `llm_calls` logging; defaults to production storage.
   let llmLogger: LLMLogger
   /// The capture store whose segments this provider decodes screenshots from.
@@ -16,6 +24,9 @@ final class OllamaProvider {
   let screenshotInterval: TimeInterval = 10  // seconds between screenshots
   // Read persisted local settings
   var savedModelId: String {
+    if let llmServerConfiguration {
+      return llmServerConfiguration.modelPath
+    }
     if let injectedRuntimeConfiguration {
       return injectedRuntimeConfiguration.modelID
     }
@@ -44,6 +55,9 @@ final class OllamaProvider {
 
   // Get the actual local engine type for analytics tracking
   var localEngine: String {
+    if llmServerConfiguration != nil {
+      return LLMProviderID.llmServer.analyticsName
+    }
     if let injectedRuntimeConfiguration {
       return injectedRuntimeConfiguration.analyticsProvider
     }
@@ -51,7 +65,10 @@ final class OllamaProvider {
   }
 
   var providerID: LLMProviderID {
-    injectedRuntimeConfiguration == nil ? .local : .openAICompatible
+    if llmServerConfiguration != nil {
+      return .llmServer
+    }
+    return injectedRuntimeConfiguration == nil ? .local : .openAICompatible
   }
 
   var authorizationBearerToken: String? {
@@ -74,25 +91,78 @@ final class OllamaProvider {
     return OllamaPromptPreferences.load()
   }
 
-  init(
-    endpoint: String = "http://localhost:1234", llmLogger: LLMLogger = .production,
-    frameStore: FrameStore = .shared
+  private init(
+    endpoint: String,
+    injectedRuntimeConfiguration: OpenAICompatibleRuntimeConfiguration?,
+    llmServerConfiguration: LLMServerConfiguration?,
+    transport: LocalLLMTransport,
+    callTimeoutInterval: TimeInterval,
+    llmLogger: LLMLogger,
+    frameStore: FrameStore
   ) {
     self.endpoint = endpoint
-    self.injectedRuntimeConfiguration = nil
+    self.injectedRuntimeConfiguration = injectedRuntimeConfiguration
+    self.llmServerConfiguration = llmServerConfiguration
+    self.transport = transport
+    self.callTimeoutInterval = callTimeoutInterval
     self.llmLogger = llmLogger
     self.frameStore = frameStore
   }
 
-  init(
+  private static let standardTimeoutInterval: TimeInterval = 60.0
+
+  convenience init(
+    endpoint: String = "http://localhost:1234", llmLogger: LLMLogger = .production,
+    frameStore: FrameStore = .shared
+  ) {
+    self.init(
+      endpoint: endpoint, injectedRuntimeConfiguration: nil, llmServerConfiguration: nil,
+      transport: DefaultLocalLLMTransport(),
+      callTimeoutInterval: Self.standardTimeoutInterval, llmLogger: llmLogger,
+      frameStore: frameStore)
+  }
+
+  convenience init(
     openAICompatible configuration: OpenAICompatibleRuntimeConfiguration,
+    llmLogger: LLMLogger = .production, frameStore: FrameStore = .shared
+  ) {
+    self.init(
+      endpoint: configuration.endpoint, injectedRuntimeConfiguration: configuration,
+      llmServerConfiguration: nil, transport: DefaultLocalLLMTransport(),
+      callTimeoutInterval: Self.standardTimeoutInterval, llmLogger: llmLogger,
+      frameStore: frameStore)
+  }
+
+  /// Custom llama.cpp-based local server ("llmserver"): stateful single-turn
+  /// prompts with per-model context, addressed through `LLMServerTransport`.
+  convenience init(
+    llmServer configuration: LLMServerConfiguration, llmLogger: LLMLogger = .production,
+    frameStore: FrameStore = .shared
+  ) {
+    self.init(
+      endpoint: configuration.baseURL, injectedRuntimeConfiguration: nil,
+      llmServerConfiguration: configuration,
+      transport: LLMServerTransport(configuration: configuration),
+      callTimeoutInterval: LLMServerTransport.defaultTimeoutInterval, llmLogger: llmLogger,
+      frameStore: frameStore)
+  }
+
+  /// Test seam mirroring the codebase's dependency-injection style (cf.
+  /// `LLMService`'s `providerContextFor`, `StorageConfiguration.isolated`):
+  /// constructs a provider around an explicit transport so the retry scaffold
+  /// can be exercised against a fake wire. Production callers use the
+  /// provider-specific initializers above.
+  convenience init(
+    endpoint: String = "http://localhost:1234",
+    transport: LocalLLMTransport,
     llmLogger: LLMLogger = .production,
     frameStore: FrameStore = .shared
   ) {
-    self.endpoint = configuration.endpoint
-    self.injectedRuntimeConfiguration = configuration
-    self.llmLogger = llmLogger
-    self.frameStore = frameStore
+    self.init(
+      endpoint: endpoint, injectedRuntimeConfiguration: nil, llmServerConfiguration: nil,
+      transport: transport,
+      callTimeoutInterval: Self.standardTimeoutInterval, llmLogger: llmLogger,
+      frameStore: frameStore)
   }
 
   // Strip user references from observations to prevent LLM from using third-person language

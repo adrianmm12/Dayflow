@@ -244,6 +244,17 @@ final class LLMService: LLMServicing {
       configuration: runtimeConfiguration, llmLogger: llmCallLogger, frameStore: frameStore)
   }
 
+  /// Custom llama.cpp-based local server ("llmserver") over the
+  /// `LLMServerTransport` wire protocol.
+  private func makeLLMServerProvider() throws -> OllamaProvider {
+    guard let configuration = LLMServerPreferences.load(), configuration.isComplete else {
+      print("❌ [LLMService] llmserver provider unavailable: incomplete configuration")
+      throw noProviderError()
+    }
+    return OllamaProvider(
+      llmServer: configuration, llmLogger: llmCallLogger, frameStore: frameStore)
+  }
+
   private func providerLabel(for providerID: LLMProviderID) -> String {
     providerID.providerLabel
   }
@@ -274,6 +285,14 @@ final class LLMService: LLMServicing {
       throw noProviderError()
     case .local:
       let provider = makeOllamaProvider(endpoint: localProviderEndpoint())
+      return (
+        actions: BatchProviderActions(
+          transcribeScreenshots: provider.transcribeScreenshots,
+          generateActivityCards: Self.rewritingWholeWindow(provider.generateActivityCards)
+        ), fallbackState: nil
+      )
+    case .llmServer:
+      let provider = try makeLLMServerProvider()
       return (
         actions: BatchProviderActions(
           transcribeScreenshots: provider.transcribeScreenshots,

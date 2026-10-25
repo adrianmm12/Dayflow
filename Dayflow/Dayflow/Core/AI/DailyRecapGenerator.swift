@@ -331,6 +331,16 @@ final class DailyRecapGenerator {
 
   private func makeLocalProvider() -> OllamaProvider? {
     let defaults = UserDefaults.standard
+
+    // The llmserver wire protocol takes precedence when it is the routed
+    // primary, so the recap path follows the same server as the timeline.
+    if LLMServerPreferences.isRoutedPrimary(from: defaults),
+      let configuration = LLMServerPreferences.load(from: defaults),
+      configuration.isComplete
+    {
+      return OllamaProvider(llmServer: configuration)
+    }
+
     let rawEngine = defaults.string(forKey: "llmLocalEngine") ?? LocalEngine.ollama.rawValue
     let engine = LocalEngine(rawValue: rawEngine) ?? .ollama
     let endpoint = defaults.string(forKey: "llmLocalBaseURL")?
@@ -347,6 +357,11 @@ final class DailyRecapGenerator {
 
   private func localProviderIsConfigured() -> Bool {
     let defaults = UserDefaults.standard
+
+    if LLMServerPreferences.isRoutedPrimary(from: defaults) {
+      return LLMServerPreferences.load(from: defaults)?.isComplete == true
+    }
+
     if defaults.bool(forKey: "ollamaSetupComplete") {
       return true
     }

@@ -6,7 +6,7 @@ This document lists manual events, properties, and code locations. All events re
 - Event names: snake_case
 - Screens: `screen_viewed` with `screen`
 - Common super properties (registered on boot): `app_version`, `build_number`, `os_version`, `device_model`, `locale`, `time_zone`
-- Person properties (identify): `analytics_opt_in`, `onboarding_status`, `current_llm_provider` (provider family), `current_llm_provider_id` (`dayflow|gemini|chatgpt|claude|openai_compatible|local`), `recording_enabled`, `install_ts` (set once), `getting_started_variant` (`control|guide|none`, set when onboarding finishes from the `getting-started-guide` feature flag; `none` means no variant was available and the guide was shown)
+- Person properties (identify): `analytics_opt_in`, `onboarding_status`, `current_llm_provider` (provider family), `current_llm_provider_id` (`dayflow|gemini|chatgpt|claude|openai_compatible|local|llmserver`), `recording_enabled`, `install_ts` (set once), `getting_started_variant` (`control|guide|none`, set when onboarding finishes from the `getting-started-guide` feature flag; `none` means no variant was available and the guide was shown)
 
 ## Lifecycle
 - app_opened
@@ -44,7 +44,7 @@ This document lists manual events, properties, and code locations. All events re
   - props: `goal: string` (free text, max 2,000 chars, empty when skipped), `character_count: int`, `skipped: bool`, `surface: onboarding_personal_goal`
   - file: Views/Onboarding/OnboardingFlow.swift
 - llm_provider_selected
-  - props: `provider: dayflow|gemini|chat_cli|openai_compatible|ollama`, `provider_id: dayflow|gemini|chatgpt|claude|openai_compatible|local`, `local_engine?: ollama|lmstudio|custom`
+  - props: `provider: dayflow|gemini|chat_cli|openai_compatible|ollama|llmserver`, `provider_id: dayflow|gemini|chatgpt|claude|openai_compatible|local|llmserver`, `local_engine?: ollama|lmstudio|custom|llmserver`
   - file: Views/Onboarding/OnboardingFlow.swift
 - dayflow_pro_selected
   - props: `surface: onboarding_dayflow_pro`, `flow_id: string`, `flow_variant: string`, `has_paid_ai: bool`, `selection_stage: started_sign_in|continued`
@@ -123,13 +123,13 @@ This document lists manual events, properties, and code locations. All events re
   - props: `from: string`, `to: string`
   - file: Views/UI/SettingsView.swift
 - provider_setup_completed
-  - props: `provider: dayflow|gemini|chat_cli|openai_compatible|ollama`, `provider_id: dayflow|gemini|chatgpt|claude|openai_compatible|local`, provider-specific non-secret configuration metadata
+  - props: `provider: dayflow|gemini|chat_cli|openai_compatible|ollama|llmserver`, `provider_id: dayflow|gemini|chatgpt|claude|openai_compatible|local|llmserver`, provider-specific non-secret configuration metadata
   - file: Views/UI/Settings/ProvidersSettingsViewModel.swift
 - provider_primary_updated / provider_secondary_updated / provider_backup_updated
   - props: exact provider IDs in `provider_id` and role-specific fields (`provider_id: none` when clearing backup); `swapped_with_secondary?: bool`, `mode?: set|swap_with_primary`
   - file: Views/UI/Settings/ProvidersSettingsViewModel.swift
 - llm_provider_routing_save_failed
-  - props: `provider_id: dayflow|gemini|chatgpt|claude|openai_compatible|local`, `surface: onboarding`
+  - props: `provider_id: dayflow|gemini|chatgpt|claude|openai_compatible|local|llmserver`, `surface: onboarding`
   - file: Views/Onboarding/OnboardingFlow.swift
 
 ## Navigation & Timeline
@@ -251,7 +251,7 @@ This document lists manual events, properties, and code locations. All events re
 
 ## AI / LLM / Analysis
 - analysis_job_started
-  - props: compatibility family in `provider: gemini|ollama|dayflow|chat_cli|openai_compatible|unknown`, exact provider in `provider_id`
+  - props: compatibility family in `provider: gemini|ollama|dayflow|chat_cli|openai_compatible|llmserver|unknown`, exact provider in `provider_id`
   - file: App/AppDelegate.swift
 - analysis_batch_started / analysis_batch_completed / analysis_batch_failed
   - props: compatibility provider family in `llm_provider`, exact primary provider in `provider_id`, exact effective provider in `effective_provider_id` on completion, and exact configured backup in `backup_provider_id` on failure
@@ -290,7 +290,7 @@ This document lists manual events, properties, and code locations. All events re
   - privacy: validation details are redacted and capped at 500 characters; raw model output, stderr, and generated card content are never sent to analytics
   - files: Core/AI/CodexProvider+ActivityCards.swift, Core/AI/CodexProvider+Transcription.swift, Core/AI/ClaudeProvider+ActivityCards.swift, Core/AI/ClaudeProvider+Transcription.swift, System/AnalyticsService.swift
 - llm_api_call
-  - props: `provider: string`, `provider_id?: dayflow|gemini|chatgpt|claude|openai_compatible|local`, `model: string`, `operation: string`, `attempt: int`, `latency_ms: int`, `outcome: success|error`, `error_domain?: string`, `error_code?: int`, `error_message?: string`, `stdout_was_present?: bool`, `stdout_length?: int`, `stdout_json_removed?: bool`, `stdout_non_json_length?: int`, `stdout_non_json_detail?: string`, `stderr_was_present?: bool`, `stderr_length?: int`, `stderr_json_removed?: bool`, `stderr_non_json_length?: int`, `stderr_non_json_detail?: string`, `http_status?: int`, `has_response_body?: bool`, `response_body_bytes?: int`
+  - props: `provider: string`, `provider_id?: dayflow|gemini|chatgpt|claude|openai_compatible|local|llmserver`, `model: string`, `operation: string`, `attempt: int`, `latency_ms: int`, `outcome: success|error`, `error_domain?: string`, `error_code?: int`, `error_message?: string`, `stdout_was_present?: bool`, `stdout_length?: int`, `stdout_json_removed?: bool`, `stdout_non_json_length?: int`, `stdout_non_json_detail?: string`, `stderr_was_present?: bool`, `stderr_length?: int`, `stderr_json_removed?: bool`, `stderr_non_json_length?: int`, `stderr_non_json_detail?: string`, `http_status?: int`, `has_response_body?: bool`, `response_body_bytes?: int`
   - privacy: error messages and non-JSON failure stdout/stderr are redacted and capped at 500 characters; braced/bracketed blocks and fenced JSON are removed first, successful output is never emitted, and request/response bodies stay local
   - file: Core/AI/LLMLogger.swift
 
